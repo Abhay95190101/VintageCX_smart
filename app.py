@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import random
 import time
@@ -48,22 +49,59 @@ def get_portfolio():
     prices = {k: v["price"] for k, v in INSTRUMENTS.items()}
     return engine.get_portfolio_summary(prices)
 
-import base64
+# --- High-Resolution Dynamic VintageCX Icon (SVG with 512x512 Viewport) ---
+ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#151922" />
+      <stop offset="100%" stop-color="#0B0E14" />
+    </radialGradient>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8B5CF6" />
+      <stop offset="50%" stop-color="#5A31F4" />
+      <stop offset="100%" stop-color="#00FFA3" />
+    </linearGradient>
+    <linearGradient id="neonV" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#089981" />
+      <stop offset="50%" stop-color="#00FFA3" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#bg)" />
+  <polygon points="256,48 440,154 440,366 256,472 72,366 72,154" fill="#111622" stroke="url(#shieldGrad)" stroke-width="8" />
+  <rect x="135" y="240" width="10" height="60" fill="rgba(8,153,129,0.35)" />
+  <line x1="140" y1="210" x2="140" y2="330" stroke="rgba(8,153,129,0.35)" stroke-width="3" />
+  <rect x="365" y="190" width="10" height="70" fill="rgba(242,54,69,0.35)" />
+  <line x1="370" y1="160" x2="370" y2="290" stroke="rgba(242,54,69,0.35)" stroke-width="3" />
+  <path d="M120,150 L256,380 L392,150" fill="none" stroke="url(#neonV)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" />
+  <path d="M120,150 L256,380 L392,150" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+  <line x1="170" y1="280" x2="340" y2="240" stroke="#F59E0B" stroke-width="10" stroke-linecap="round" filter="url(#glow)" />
+  <circle cx="256" cy="380" r="16" fill="#00FFA3" filter="url(#glow)" />
+  <circle cx="256" cy="380" r="8" fill="#FFFFFF" />
+</svg>"""
 
-# 1x1 valid PNG in base64 format for self-contained PWA icon delivery
-ICON_PNG_B64 = base64.b64decode(
+@app.get("/icon.svg")
+def get_icon_svg():
+    return Response(content=ICON_SVG, media_type="image/svg+xml")
+
+# Universal PNG endpoints for PWABuilder Android packaging
+ICON_1PX_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 
 @app.get("/icon-512.png")
 def get_icon_512():
-    return Response(content=ICON_PNG_B64, media_type="image/png")
+    return Response(content=ICON_1PX_PNG, media_type="image/png")
 
 @app.get("/icon-192.png")
 def get_icon_192():
-    return Response(content=ICON_PNG_B64, media_type="image/png")
+    return Response(content=ICON_1PX_PNG, media_type="image/png")
 
-# --- PWA Manifest & Service Worker Endpoints for APK generation ---
+# --- PWA Manifest & Service Worker ---
 @app.get("/manifest.json")
 def manifest():
     return JSONResponse(content={
@@ -76,14 +114,27 @@ def manifest():
         "background_color": "#0B0E14",
         "theme_color": "#5A31F4",
         "icons": [
-    {
-        "src": "https://raw.githubusercontent.com/Abhay95190101/VintageCX_smart/main/VintageCX-Dynamic-Icon.png",
-        "sizes": "512x512",
-        "type": "image/png",
-        "purpose": "any maskable"
-    }
-]
+            {
+                "src": "/icon.svg",
+                "sizes": "512x512",
+                "type": "image/svg+xml",
+                "purpose": "any"
+            },
+            {
+                "src": "/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any maskable"
+            },
+            {
+                "src": "/icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any maskable"
+            }
+        ]
     })
+
 @app.get("/sw.js")
 def service_worker():
     return Response(
@@ -91,7 +142,7 @@ def service_worker():
         media_type="application/javascript"
     )
 
-# --- WebSocket Feed (Supports both ws:// and wss://) ---
+# --- WebSocket Feed (Supports wss:// and ws://) ---
 @app.websocket("/ws/market-feed")
 async def market_data_feed(websocket: WebSocket):
     await websocket.accept()
@@ -140,6 +191,7 @@ def index_view():
         <title>VintageCX Pro Terminal</title>
         <link rel="manifest" href="/manifest.json">
         <meta name="theme-color" content="#5A31F4">
+        <link rel="icon" type="image/svg+xml" href="/icon.svg">
         <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             :root {
@@ -156,7 +208,6 @@ def index_view():
             body { background: var(--bg-main); color: var(--text-primary); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
             header { height: 50px; background: var(--bg-card); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
             .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; color: #fff; }
-            .brand span { background: var(--upstox-purple); padding: 3px 6px; border-radius: 4px; font-size: 0.75rem; }
             .funds { display: flex; gap: 16px; font-size: 0.82rem; }
             .funds span { color: var(--text-muted); }
             .main-container { display: flex; flex: 1; height: calc(100vh - 50px); }
@@ -188,17 +239,11 @@ def index_view():
         </style>
     </head>
     <body>
-       <header>
-            <div class="brand" style="display:flex;align-items:center;gap:10px;">
-                <svg width="34" height="34" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <polygon points="50,4 94,27 94,73 50,96 6,73 6,27" fill="#151922" stroke="#5A31F4" stroke-width="3"/>
-                    <path d="M26,30 L50,75 L74,30" stroke="#00FFA3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-                    <circle cx="50" cy="75" r="5" fill="#00FFA3"/>
-                </svg>
-                <span style="font-weight:800;font-size:1.15rem;letter-spacing:0.5px;color:#fff;">
-                    VINTAGE<span style="color:#00FFA3;background:transparent;padding:0;">CX</span>
-                </span>
-                <span style="background:#5A31F4;color:#fff;font-size:0.7rem;font-weight:700;padding:2px 6px;border-radius:4px;">PRO</span>
+        <header>
+            <div class="brand">
+                <img src="/icon.svg" alt="Logo" style="width: 32px; height: 32px; border-radius: 6px;">
+                <span style="font-weight: 800; font-size: 1.1rem; letter-spacing: 0.5px;">VINTAGE<span style="color:#00FFA3;">CX</span></span>
+                <span style="background: var(--upstox-purple); padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700;">PRO</span>
             </div>
             <div class="funds">
                 <div>Cash: <strong id="cash-balance" style="color:#fff;">₹1,00,000.00</strong></div>
@@ -255,7 +300,6 @@ def index_view():
         </div>
 
         <script>
-            // Register service worker for APK / PWA compatibility
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('/sw.js');
             }
@@ -324,7 +368,6 @@ def index_view():
                 if (price) seedCandles(price);
             }
 
-            // Secure WebSocket for production HTTPS
             const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/market-feed`);
             
