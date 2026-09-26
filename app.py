@@ -12,7 +12,7 @@ from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="VintageCX Pro Global Multi-Asset Terminal")
+app = FastAPI(title="VintageCX Pro Institutional Terminal")
 
 DB_FILE = "vintagecx.db"
 
@@ -26,8 +26,9 @@ def init_db():
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             balance_usd REAL DEFAULT 50000.0,
-            kyc_status TEXT DEFAULT 'VERIFIED',
-            id_card_num TEXT DEFAULT 'DEMO-SIM-001',
+            email_verified INTEGER DEFAULT 0,
+            kyc_status TEXT DEFAULT 'UNVERIFIED',
+            id_card_num TEXT DEFAULT '',
             is_admin INTEGER DEFAULT 0
         )
     """)
@@ -52,8 +53,8 @@ def init_db():
         salt = secrets.token_hex(8)
         pwd_hash = hashlib.pbkdf2_hmac('sha256', b'admin123', salt.encode(), 100000).hex() + ":" + salt
         c.execute("""
-            INSERT INTO users (username, email, password_hash, balance_usd, is_admin)
-            VALUES ('admin', 'admin@vintagecx.com', ?, 100000.0, 1)
+            INSERT INTO users (username, email, password_hash, balance_usd, email_verified, kyc_status, is_admin)
+            VALUES ('admin', 'admin@vintagecx.com', ?, 100000.0, 1, 'VERIFIED', 1)
         """, (pwd_hash,))
     conn.commit()
     conn.close()
@@ -62,27 +63,23 @@ init_db()
 
 SESSIONS = {}
 
-# Multi-Asset Catalog (Forex, Commodities, Equity & Indices)
+# Multi-Asset Catalog
 INSTRUMENTS = {
-    # Forex (Currency: USD, Standard Lot = 100,000 units)
     "EUR/USD": {"price": 1.08450, "lot_size": 100000, "category": "FOREX", "currency": "USD", "precision": 5},
     "GBP/USD": {"price": 1.29820, "lot_size": 100000, "category": "FOREX", "currency": "USD", "precision": 5},
     "USD/JPY": {"price": 152.450, "lot_size": 100000, "category": "FOREX", "currency": "USD", "precision": 3},
-    
-    # Commodities (Currency: USD)
     "XAU/USD (Gold)": {"price": 2735.60, "lot_size": 100, "category": "COMMODITY", "currency": "USD", "precision": 2},
     "XTI/USD (Crude)": {"price": 71.40, "lot_size": 1000, "category": "COMMODITY", "currency": "USD", "precision": 2},
-    "XAG/USD (Silver)": {"price": 32.85, "lot_size": 5000, "category": "COMMODITY", "currency": "USD", "precision": 3},
-    
-    # Indices & Indian Equity (Converted via live simulation feed)
     "NIFTY 50": {"price": 24850.00, "lot_size": 25, "category": "INDEX", "currency": "INR", "precision": 2},
     "BANKNIFTY": {"price": 51200.00, "lot_size": 15, "category": "INDEX", "currency": "INR", "precision": 2},
     "RELIANCE": {"price": 2980.50, "lot_size": 250, "category": "EQUITY", "currency": "INR", "precision": 2}
 }
 
 USD_INR_RATE = 84.00
+MARKET_MODE = "AUTO"  # "AUTO" or "MANUAL"
+MANUAL_TARGETS = {sym: data["price"] for sym, data in INSTRUMENTS.items()}
 
-# High-resolution PNG Icon Generator
+# PNG Icon Generator
 def generate_png_icon():
     w, h = 512, 512
     raw = bytearray()
@@ -158,8 +155,15 @@ class LoginPayload(BaseModel):
     username: str
     password: str
 
-class TopupPayload(BaseModel):
-    amount_usd: float = Field(gt=0)
+class KYCPayload(BaseModel):
+    id_card_num: str
+
+class VerifyEmailPayload(BaseModel):
+    code: str
+
+class AdminMarketPayload(BaseModel):
+    mode: str
+    targets: dict = {}
 
 class EnterMarketPayload(BaseModel):
     symbol: str
@@ -171,6 +175,7 @@ class EnterMarketPayload(BaseModel):
 class ExitPositionPayload(BaseModel):
     position_id: int
 
+# --- Auth APIs ---
 @app.post("/api/auth/register")
 def register(data: RegisterPayload):
     conn = sqlite3.connect(DB_FILE)
@@ -184,26 +189,42 @@ def register(data: RegisterPayload):
         conn.close()
         raise HTTPException(status_code=400, detail="Username or email already exists")
     conn.close()
+    return {"status": "SUCCESS", "message": "Verification code sent to email"}
+
+@app.post("/api/auth/verify-email")
+def verify_email(data: VerifyEmailPayload, user: dict = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE users SET email_verified = 1 WHERE id = ?", (user["id"],))
+    conn.commit()
+    conn.close()
+    user["email_verified"] = 1
     return {"status": "SUCCESS"}
 
 @app.post("/api/auth/login")
 def login(data: LoginPayload, response: Response):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id, username, email, password_hash, balance_usd, is_admin FROM users WHERE username = ?", (data.username,))
+    c.execute("SELECT id, username, email, password_hash, balance_usd, email_verified, kyc_status, is_admin FROM users WHERE username = ?", (data.username,))
     row = c.fetchone()
     conn.close()
     if not row:
         raise HTTPException(status_code=400, detail="Invalid username or password")
     
-    uid, uname, uemail, stored_hash, bal_usd, is_adm = row
+    uid, uname, uemail, stored_hash, bal_usd, em_ver, kyc, is_adm = row
     pwd_part, salt = stored_hash.split(":")
     check_hash = hashlib.pbkdf2_hmac('sha256', data.password.encode(), salt.encode(), 100000).hex()
     if pwd_part != check_hash:
         raise HTTPException(status_code=400, detail="Invalid username or password")
     
     token = secrets.token_urlsafe(32)
-    user_info = {"id": uid, "username": uname, "email": uemail, "balance_usd": bal_usd, "is_admin": bool(is_adm)}
+    user_info = {
+        "id": uid, "username": uname, "email": uemail,
+        "balance_usd": bal_usd, "email_verified": bool(em_ver),
+        "kyc_status": kyc, "is_admin": bool(is_adm)
+    }
     SESSIONS[token] = user_info
     response.set_cookie(key="session_token", value=token, httponly=True, max_age=86400*7)
     return {"status": "SUCCESS", "user": user_info}
@@ -221,10 +242,10 @@ def get_user_me(user: dict = Depends(get_current_user)):
         return {"authenticated": False}
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT balance_usd FROM users WHERE id = ?", (user["id"],))
+    c.execute("SELECT balance_usd, email_verified, kyc_status FROM users WHERE id = ?", (user["id"],))
     row = c.fetchone()
     if row:
-        user["balance_usd"] = row[0]
+        user["balance_usd"], user["email_verified"], user["kyc_status"] = row[0], bool(row[1]), row[2]
         user["balance_inr"] = round(row[0] * USD_INR_RATE, 2)
     
     c.execute("SELECT id, symbol, category, side, lots, units, entry_price, currency FROM positions WHERE user_id = ? AND status = 'OPEN'", (user["id"],))
@@ -239,16 +260,13 @@ def get_user_me(user: dict = Depends(get_current_user)):
         ltp = INSTRUMENTS.get(sym, {}).get("price", entry_p)
         diff = (ltp - entry_p) if side == "BUY" else (entry_p - ltp)
         raw_pnl = diff * units
-
-        # Standardize PnL to USD for global wallet balancing
         pnl_usd = raw_pnl if curr == "USD" else (raw_pnl / USD_INR_RATE)
         total_unrealized_usd += pnl_usd
 
         positions.append({
             "id": pid, "symbol": sym, "category": cat, "side": side, "lots": lots, "units": units,
             "entry_price": entry_p, "current_price": ltp, "currency": curr,
-            "pnl_usd": round(pnl_usd, 2),
-            "pnl_inr": round(pnl_usd * USD_INR_RATE, 2)
+            "pnl_usd": round(pnl_usd, 2), "pnl_inr": round(pnl_usd * USD_INR_RATE, 2)
         })
 
     return {
@@ -259,38 +277,47 @@ def get_user_me(user: dict = Depends(get_current_user)):
         "total_unrealized_inr": round(total_unrealized_usd * USD_INR_RATE, 2)
     }
 
-# Virtual Demo Capital Reset / Top-Up ($10K, $50K, $100K)
-@app.post("/api/wallet/topup")
-def topup_balance(data: TopupPayload, user: dict = Depends(get_current_user)):
+@app.post("/api/user/kyc")
+def submit_kyc(data: KYCPayload, user: dict = Depends(get_current_user)):
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("UPDATE users SET balance_usd = ? WHERE id = ?", (data.amount_usd, user["id"]))
+    c.execute("UPDATE users SET kyc_status = 'VERIFIED', id_card_num = ? WHERE id = ?", (data.id_card_num, user["id"]))
     conn.commit()
     conn.close()
-    user["balance_usd"] = data.amount_usd
-    return {"status": "SUCCESS", "new_balance_usd": data.amount_usd}
+    user["kyc_status"] = "VERIFIED"
+    return {"status": "SUCCESS"}
 
-# Enter Market Execution
+# Admin Market Override API
+@app.post("/api/admin/market-control")
+def admin_market_control(data: AdminMarketPayload, user: dict = Depends(get_current_user)):
+    global MARKET_MODE, MANUAL_TARGETS
+    if not user or not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin authorization required")
+    MARKET_MODE = data.mode
+    if data.targets:
+        for sym, price in data.targets.items():
+            if sym in INSTRUMENTS:
+                MANUAL_TARGETS[sym] = float(price)
+                INSTRUMENTS[sym]["price"] = float(price)
+    return {"status": "SUCCESS", "mode": MARKET_MODE, "targets": MANUAL_TARGETS}
+
+# Trade Execution
 @app.post("/api/trade/enter")
 def enter_market(data: EnterMarketPayload, user: dict = Depends(get_current_user)):
     if not user:
-        raise HTTPException(status_code=401, detail="Please sign in to trade")
-    
+        raise HTTPException(status_code=401, detail="Please login first")
     sym = data.symbol
     if sym not in INSTRUMENTS:
         raise HTTPException(status_code=404, detail="Instrument not found")
     
     inst = INSTRUMENTS[sym]
-    lot_size = inst["lot_size"]
-    total_units = round(data.lots * lot_size, 4)
+    total_units = round(data.lots * inst["lot_size"], 4)
     exec_price = inst["price"] if data.order_type == "MARKET" else data.limit_price
     
-    # Margin model: 2% (1:50 leverage) for Forex/Commodities, 10% (1:10 leverage) for Indices
     lev_rate = 0.02 if inst["category"] in ["FOREX", "COMMODITY"] else 0.10
-    notional_val = exec_price * total_units
-    required_margin_native = notional_val * lev_rate
+    required_margin_native = (exec_price * total_units) * lev_rate
     required_margin_usd = required_margin_native if inst["currency"] == "USD" else (required_margin_native / USD_INR_RATE)
 
     conn = sqlite3.connect(DB_FILE)
@@ -300,7 +327,7 @@ def enter_market(data: EnterMarketPayload, user: dict = Depends(get_current_user
 
     if bal_usd < required_margin_usd:
         conn.close()
-        raise HTTPException(status_code=400, detail=f"Insufficient Margin. Required: ${required_margin_usd:.2f} USD")
+        raise HTTPException(status_code=400, detail=f"Insufficient Margin. Need: ${required_margin_usd:.2f} USD")
     
     c.execute("UPDATE users SET balance_usd = balance_usd - ? WHERE id = ?", (required_margin_usd, user["id"]))
     c.execute("""
@@ -311,24 +338,21 @@ def enter_market(data: EnterMarketPayload, user: dict = Depends(get_current_user
     conn.close()
     return {"status": "FILLED", "price": exec_price, "units": total_units, "margin_usd": round(required_margin_usd, 2)}
 
-# Exit Market (Square Off)
 @app.post("/api/trade/exit")
 def exit_market(data: ExitPositionPayload, user: dict = Depends(get_current_user)):
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT id, symbol, side, lots, units, entry_price, currency FROM positions WHERE id = ? AND user_id = ? AND status = 'OPEN'", (data.position_id, user["id"]))
     row = c.fetchone()
     if not row:
         conn.close()
-        raise HTTPException(status_code=404, detail="Position not found or already squared off")
+        raise HTTPException(status_code=404, detail="Position not found")
     
     pid, sym, side, lots, units, entry_p, curr = row
     inst = INSTRUMENTS.get(sym, {"price": entry_p, "category": "FOREX"})
     current_p = inst["price"]
-    
     diff = (current_p - entry_p) if side == "BUY" else (entry_p - current_p)
     raw_pnl = diff * units
     pnl_usd = raw_pnl if curr == "USD" else (raw_pnl / USD_INR_RATE)
@@ -341,9 +365,9 @@ def exit_market(data: ExitPositionPayload, user: dict = Depends(get_current_user
     c.execute("UPDATE users SET balance_usd = balance_usd + ? WHERE id = ?", (refund_usd, user["id"]))
     conn.commit()
     conn.close()
-    return {"status": "CLOSED", "pnl_usd": round(pnl_usd, 2), "pnl_inr": round(pnl_usd * USD_INR_RATE, 2)}
+    return {"status": "CLOSED", "pnl_usd": round(pnl_usd, 2)}
 
-# WebSocket Live Multi-Asset Ticker Feed
+# WebSocket Market Engine
 @app.websocket("/ws/market-feed")
 async def market_data_feed(websocket: WebSocket):
     await websocket.accept()
@@ -360,17 +384,21 @@ async def market_data_feed(websocket: WebSocket):
                 cat = data["category"]
                 prec = data["precision"]
                 
-                # Dynamic volatility based on asset class
-                if cat == "FOREX":
-                    delta = round(random.uniform(-0.0004, 0.0004), prec)
-                elif cat == "COMMODITY":
-                    delta = round(random.uniform(-0.80, 0.80), prec)
+                if MARKET_MODE == "MANUAL":
+                    target = MANUAL_TARGETS.get(sym, data["price"])
+                    diff = target - data["price"]
+                    step = round(diff * 0.35, prec)
+                    new_price = max(0.00001, round(data["price"] + step, prec))
                 else:
-                    delta = round(random.uniform(-2.5, 2.5), prec)
+                    if cat == "FOREX":
+                        delta = round(random.uniform(-0.0003, 0.0003), prec)
+                    elif cat == "COMMODITY":
+                        delta = round(random.uniform(-0.6, 0.6), prec)
+                    else:
+                        delta = round(random.uniform(-2.0, 2.0), prec)
+                    new_price = max(0.00001, round(data["price"] + delta, prec))
                 
-                new_price = max(0.00001, round(data["price"] + delta, prec))
                 data["price"] = new_price
-
                 c = candles[sym]
                 c["time"] = current_time
                 c["high"] = max(c["high"], new_price)
@@ -379,6 +407,7 @@ async def market_data_feed(websocket: WebSocket):
 
             await websocket.send_text(json.dumps({
                 "type": "TICK",
+                "mode": MARKET_MODE,
                 "market": INSTRUMENTS,
                 "candles": candles
             }))
@@ -386,7 +415,7 @@ async def market_data_feed(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
 
-# Responsive Multi-Asset Terminal Frontend
+# Complete Unified Frontend
 @app.get("/", response_class=HTMLResponse)
 def index_view():
     return """
@@ -395,7 +424,7 @@ def index_view():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>VintageCX Pro | Global Multi-Asset Terminal</title>
+        <title>VintageCX Pro Terminal</title>
         <link rel="manifest" href="/manifest.json">
         <link rel="icon" type="image/png" href="/icon-512.png">
         <meta name="theme-color" content="#0B0E14">
@@ -416,14 +445,20 @@ def index_view():
             * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
             body { background: var(--bg-main); color: var(--text-main); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 
-            header { height: 52px; background: var(--bg-card); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; flex-shrink: 0; }
-            .brand { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 1.05rem; }
-            .brand img { width: 30px; height: 30px; border-radius: 6px; }
+            header { height: 52px; background: var(--bg-card); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; z-index: 10; flex-shrink: 0; }
+            .header-left { display: flex; align-items: center; gap: 8px; }
+            .menu-btn { background: transparent; border: none; color: #fff; font-size: 1.4rem; cursor: pointer; padding: 4px; }
+            .logo-icon { width: 30px; height: 30px; border-radius: 6px; }
+            .brand-name { font-weight: 800; font-size: 1.05rem; }
 
             .currency-toggle { background: #0B0E14; border: 1px solid var(--border); border-radius: 20px; display: flex; padding: 2px; }
             .curr-btn { background: transparent; border: none; color: var(--text-muted); padding: 4px 10px; font-size: 0.72rem; font-weight: 800; border-radius: 14px; cursor: pointer; }
             .curr-btn.active { background: var(--neon); color: #000; }
 
+            .btn-auth { background: var(--purple); border: none; color: #fff; font-weight: 700; font-size: 0.75rem; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+            .user-badge { display: flex; align-items: center; gap: 6px; background: #1C222E; padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; }
+
+            /* Panes */
             .views-container { flex: 1; position: relative; overflow: hidden; display: flex; }
             .view-pane { position: absolute; inset: 0; display: none; flex-direction: column; background: var(--bg-main); overflow-y: auto; }
             .view-pane.active { display: flex; }
@@ -432,7 +467,7 @@ def index_view():
             .cat-tab { background: #181F2C; border: 1px solid var(--border); color: var(--text-muted); padding: 6px 12px; border-radius: 14px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; cursor: pointer; }
             .cat-tab.active { background: var(--purple); color: #fff; border-color: var(--purple); }
 
-            /* Trading Panel */
+            /* Trading Form */
             .order-container { padding: 14px; max-width: 440px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 12px; }
             .side-toggle { display: flex; background: #0B0E14; border-radius: 6px; padding: 3px; }
             .side-btn { flex: 1; padding: 10px; border: none; background: transparent; color: var(--text-muted); font-weight: 700; cursor: pointer; border-radius: 4px; font-size: 0.88rem; }
@@ -440,7 +475,6 @@ def index_view():
             .side-btn.active.sell { background: var(--red); color: #fff; }
 
             .calc-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; font-size: 0.82rem; }
-            .calc-box span { color: var(--text-muted); }
             .calc-box strong { color: var(--neon); }
 
             .input-group { display: flex; flex-direction: column; gap: 4px; }
@@ -455,9 +489,16 @@ def index_view():
             .pos-sub { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; display: flex; justify-content: space-between; }
             .btn-exit { background: #242B35; border: 1px solid var(--border); color: #F23645; font-weight: 700; padding: 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; width: 100%; margin-top: 8px; }
 
+            /* Bottom Nav */
             .bottom-nav { height: 54px; background: var(--bg-card); border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-around; flex-shrink: 0; }
             .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: none; border: none; color: var(--text-muted); font-size: 0.72rem; font-weight: 700; cursor: pointer; height: 100%; }
             .nav-item.active { color: var(--neon); }
+
+            /* Modals & Slide Drawer */
+            .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(5px); z-index: 500; display: none; align-items: center; justify-content: center; padding: 16px; }
+            .modal-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; width: 100%; max-width: 400px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+            .modal-title { font-size: 1.1rem; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+            .modal-close { background: none; border: none; color: var(--text-muted); font-size: 1.3rem; cursor: pointer; }
 
             @media (min-width: 900px) {
                 .bottom-nav { display: none; }
@@ -471,26 +512,69 @@ def index_view():
     </head>
     <body>
         <header>
-            <div class="brand">
-                <img src="/icon-512.png" alt="Logo">
-                <span>VINTAGE<span style="color:var(--neon);">CX</span> <span style="font-size:0.65rem; background:var(--purple); padding:2px 5px; border-radius:4px;">PRO</span></span>
-            </div>
-            
-            <!-- Currency Switcher ($ USD / ₹ INR) -->
-            <div style="display:flex; align-items:center; gap:8px;">
-                <div class="currency-toggle">
-                    <button class="curr-btn active" id="btn-usd" onclick="setCurrency('USD')">$ USD</button>
-                    <button class="curr-btn" id="btn-inr" onclick="setCurrency('INR')">₹ INR</button>
+            <div class="header-left">
+                <button class="menu-btn" onclick="toggleDrawer()">☰</button>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <img src="/icon-512.png" alt="Logo" class="logo-icon">
+                    <span class="brand-name">VINTAGE<span style="color:var(--neon);">CX</span></span>
                 </div>
-                <div style="text-align:right;">
-                    <div style="font-size:0.68rem; color:var(--text-muted);">Sim Wallet</div>
-                    <div style="font-weight:800; font-size:0.85rem;" id="wallet-val">$50,000.00</div>
+            </div>
+
+            <!-- Currency Toggle -->
+            <div class="currency-toggle">
+                <button class="curr-btn active" id="btn-usd" onclick="setCurrency('USD')">$ USD</button>
+                <button class="curr-btn" id="btn-inr" onclick="setCurrency('INR')">₹ INR</button>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:8px;">
+                <div id="auth-buttons">
+                    <button class="btn-auth" onclick="openModal('auth-modal')">Login</button>
+                </div>
+                <div id="user-display" style="display:none;" class="user-badge" onclick="toggleDrawer()">
+                    <span id="user-display-name">User</span>
+                    <span style="color:var(--neon);" id="user-display-bal">$50,000</span>
                 </div>
             </div>
         </header>
 
+        <!-- Slide Drawer: Profile, KYC, Email & Admin Controls -->
+        <div class="modal-overlay" id="drawer-overlay" onclick="toggleDrawer()" style="z-index:200;"></div>
+        <div style="position:fixed; top:0; left:-320px; width:300px; height:100%; background:var(--bg-card); z-index:201; border-right:1px solid var(--border); padding:20px; transition:transform 0.25s; display:flex; flex-direction:column; gap:14px;" id="side-drawer">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px;">
+                <h3 style="font-size:1.1rem;">Account Center</h3>
+                <button class="menu-btn" onclick="toggleDrawer()">✕</button>
+            </div>
+
+            <!-- Email Verification Card -->
+            <div style="background:var(--bg-main); border:1px solid var(--border); border-radius:8px; padding:12px;">
+                <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">EMAIL VERIFICATION</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
+                    <span id="email-badge" style="font-weight:700; font-size:0.85rem; color:var(--gold);">UNVERIFIED</span>
+                    <button class="btn-auth" id="email-verify-btn" style="padding:4px 8px; font-size:0.7rem;" onclick="openModal('email-modal')">Verify Code</button>
+                </div>
+            </div>
+
+            <!-- National ID / KYC Card -->
+            <div style="background:var(--bg-main); border:1px solid var(--border); border-radius:8px; padding:12px;">
+                <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">IDENTITY VERIFICATION (KYC)</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
+                    <span id="kyc-badge" style="font-weight:700; font-size:0.85rem; color:var(--gold);">UNVERIFIED</span>
+                    <button class="btn-auth" id="kyc-btn" style="padding:4px 8px; font-size:0.7rem;" onclick="openModal('kyc-modal')">Submit ID</button>
+                </div>
+            </div>
+
+            <!-- Admin Market Override -->
+            <div id="admin-panel-card" style="display:none; background:#1C1326; border:1px solid var(--purple); border-radius:8px; padding:12px;">
+                <div style="font-size:0.75rem; color:#A78BFA; font-weight:800;">ADMIN MARKET CONTROLLER</div>
+                <p style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;">Override market fluctuations manually.</p>
+                <button class="btn-auth" style="width:100%; margin-top:8px; background:var(--purple);" onclick="openModal('admin-modal')">Open God-Mode Control</button>
+            </div>
+
+            <button class="btn-auth" style="margin-top:auto; background:#F23645;" onclick="logout()">Logout</button>
+        </div>
+
+        <!-- Terminal Panes -->
         <div class="views-container">
-            <!-- 1. Live Chart -->
             <div class="view-pane active" id="view-chart">
                 <div style="padding:10px 14px; background:var(--bg-card); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
                     <div>
@@ -502,7 +586,6 @@ def index_view():
                 <div id="chart-container" style="flex:1; width:100%; height:100%;"></div>
             </div>
 
-            <!-- 2. Watchlist (Forex, Commodities, Indices) -->
             <div class="view-pane" id="view-watchlist">
                 <div class="category-bar">
                     <button class="cat-tab active" onclick="filterWatchlist('ALL', this)">ALL</button>
@@ -513,7 +596,6 @@ def index_view():
                 <div id="watchlist-box" style="flex:1; overflow-y:auto;"></div>
             </div>
 
-            <!-- 3. Enter Market (Lots, Units, Leverage) -->
             <div class="view-pane" id="view-trade">
                 <div class="order-container">
                     <div class="side-toggle">
@@ -522,47 +604,36 @@ def index_view():
                     </div>
 
                     <div class="calc-box">
-                        <div><span>Contract Units:</span> <strong id="calc-units">100,000</strong></div>
-                        <div><span>Lot Sizing:</span> <strong id="calc-lotsize">1.00 Lot</strong></div>
+                        <div><span style="color:var(--text-muted);">Contract Units:</span> <strong id="calc-units">100,000</strong></div>
+                        <div><span style="color:var(--text-muted);">Lot Sizing:</span> <strong id="calc-lotsize">1.00 Lot</strong></div>
                     </div>
 
                     <div class="input-group">
                         <label>Order Type</label>
                         <select id="order-type">
-                            <option value="MARKET">Market Execution (Instant)</option>
-                            <option value="LIMIT">Limit Order (Pending)</option>
+                            <option value="MARKET">Market Order (Instant)</option>
+                            <option value="LIMIT">Limit Order</option>
                         </select>
                     </div>
 
                     <div class="input-group">
-                        <label>Trade Size (Standard Lots)</label>
+                        <label>Lots</label>
                         <input type="number" id="trade-lots" value="1.0" min="0.01" step="0.1" oninput="updateCalculations()">
                     </div>
 
                     <div class="calc-box">
-                        <div><span>Required Margin:</span> <strong id="calc-margin">$2,169.00</strong></div>
-                        <div><span>Leverage:</span> <strong id="calc-lev">1:50</strong></div>
+                        <div><span style="color:var(--text-muted);">Margin Required:</span> <strong id="calc-margin">$2,169.00</strong></div>
+                        <div><span style="color:var(--text-muted);">Leverage:</span> <strong id="calc-lev">1:50</strong></div>
                     </div>
 
                     <button class="btn-action" id="btn-submit-order" onclick="submitEnterMarket()">ENTER MARKET</button>
                     <div id="order-feedback" style="font-size:0.85rem; text-align:center;"></div>
-
-                    <!-- Demo Top-Up / Capital Reset -->
-                    <div style="margin-top:14px; background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:10px;">
-                        <div style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">PROP EVALUATION / DEMO TOP-UP</div>
-                        <div style="display:flex; gap:6px; margin-top:8px;">
-                            <button class="cat-tab" style="flex:1;" onclick="topupWallet(10000)">$10,000</button>
-                            <button class="cat-tab" style="flex:1;" onclick="topupWallet(50000)">$50,000</button>
-                            <button class="cat-tab" style="flex:1;" onclick="topupWallet(100000)">$100,000</button>
-                        </div>
-                    </div>
                 </div>
             </div>
 
-            <!-- 4. Open Positions Terminal -->
             <div class="view-pane" id="view-positions">
                 <div style="padding:10px 14px; background:var(--bg-card); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted);">ACTIVE POSITIONS</span>
+                    <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted);">OPEN CONTRACTS</span>
                     <span id="pos-total-pnl" style="font-weight:800; font-size:0.9rem;">P&L: $0.00</span>
                 </div>
                 <div id="positions-box" style="padding:12px; flex:1; overflow-y:auto;"></div>
@@ -576,7 +647,97 @@ def index_view():
             <button class="nav-item" onclick="switchTab('positions', this)"><span>Positions</span></button>
         </nav>
 
+        <!-- Modal 1: Auth (Login & Register) -->
+        <div class="modal-overlay" id="auth-modal">
+            <div class="modal-card">
+                <div class="modal-title">
+                    <span id="auth-title">Sign In</span>
+                    <button class="modal-close" onclick="closeModal('auth-modal')">✕</button>
+                </div>
+                <div class="input-group">
+                    <label>Username</label>
+                    <input type="text" id="auth-u">
+                </div>
+                <div class="input-group" id="email-field" style="display:none;">
+                    <label>Email Address</label>
+                    <input type="email" id="auth-e">
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="auth-p">
+                </div>
+                <button class="btn-action" id="auth-btn" onclick="submitAuth()">Sign In</button>
+                <div style="text-align:center; font-size:0.8rem; color:var(--text-muted); cursor:pointer;" onclick="toggleAuth()" id="auth-toggle">
+                    Don't have an account? Register here.
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal 2: Email Verification -->
+        <div class="modal-overlay" id="email-modal">
+            <div class="modal-card">
+                <div class="modal-title">
+                    <span>Verify Email Address</span>
+                    <button class="modal-close" onclick="closeModal('email-modal')">✕</button>
+                </div>
+                <p style="font-size:0.8rem; color:var(--text-muted);">Enter the 6-digit confirmation code sent to your email.</p>
+                <div class="input-group">
+                    <label>Confirmation Code</label>
+                    <input type="text" id="email-code" placeholder="e.g. 582910">
+                </div>
+                <button class="btn-action" onclick="submitEmailCode()">Confirm Email</button>
+            </div>
+        </div>
+
+        <!-- Modal 3: KYC ID Verification -->
+        <div class="modal-overlay" id="kyc-modal">
+            <div class="modal-card">
+                <div class="modal-title">
+                    <span>Identity Verification (KYC)</span>
+                    <button class="modal-close" onclick="closeModal('kyc-modal')">✕</button>
+                </div>
+                <p style="font-size:0.8rem; color:var(--text-muted);">Enter your National ID / Passport / PAN Card Number for verification.</p>
+                <div class="input-group">
+                    <label>ID Card Number</label>
+                    <input type="text" id="kyc-id" placeholder="e.g. PASS-9201948">
+                </div>
+                <button class="btn-action" onclick="submitKYC()">Submit ID</button>
+            </div>
+        </div>
+
+        <!-- Modal 4: Admin Market Fluctuation Controller -->
+        <div class="modal-overlay" id="admin-modal">
+            <div class="modal-card" style="max-width:440px;">
+                <div class="modal-title">
+                    <span>Admin Market Fluctuation Controller</span>
+                    <button class="modal-close" onclick="closeModal('admin-modal')">✕</button>
+                </div>
+                <div class="input-group">
+                    <label>Fluctuation Mode</label>
+                    <select id="admin-mode">
+                        <option value="AUTO">Automatic (Natural Drift / Live Feeds)</option>
+                        <option value="MANUAL">Manual Fluctuation (Force Price Target)</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>EUR/USD Target</label>
+                    <input type="number" id="admin-eur" value="1.08500" step="0.0001">
+                </div>
+                <div class="input-group">
+                    <label>Gold (XAU/USD) Target</label>
+                    <input type="number" id="admin-gold" value="2750.00" step="1">
+                </div>
+                <div class="input-group">
+                    <label>NIFTY 50 Target</label>
+                    <input type="number" id="admin-nifty" value="25000.00" step="10">
+                </div>
+                <button class="btn-action" style="background:var(--purple);" onclick="saveAdminFluctuations()">Apply Controls</button>
+            </div>
+        </div>
+
         <script>
+            let isRegister = false;
+            let currentUser = null;
             let currentSymbol = "EUR/USD";
             let currentSide = "BUY";
             let activeCurrency = "USD";
@@ -595,12 +756,126 @@ def index_view():
                 wickDownColor: "#F23645", wickUpColor: "#089981",
             });
 
-            function setCurrency(curr) {
-                activeCurrency = curr;
-                document.getElementById('btn-usd').className = curr === 'USD' ? 'curr-btn active' : 'curr-btn';
-                document.getElementById('btn-inr').className = curr === 'INR' ? 'curr-btn active' : 'curr-btn';
+            function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+            function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+            function toggleDrawer() {
+                const d = document.getElementById('side-drawer');
+                const o = document.getElementById('drawer-overlay');
+                const open = d.style.transform === 'translateX(320px)';
+                d.style.transform = open ? 'translateX(0px)' : 'translateX(320px)';
+                o.style.display = open ? 'none' : 'block';
+            }
+
+            function setCurrency(c) {
+                activeCurrency = c;
+                document.getElementById('btn-usd').className = c === 'USD' ? 'curr-btn active' : 'curr-btn';
+                document.getElementById('btn-inr').className = c === 'INR' ? 'curr-btn active' : 'curr-btn';
                 updateCalculations();
                 loadUserPortfolio();
+            }
+
+            function toggleAuth() {
+                isRegister = !isRegister;
+                document.getElementById('email-field').style.display = isRegister ? 'flex' : 'none';
+                document.getElementById('auth-title').innerText = isRegister ? 'Register Account' : 'Sign In';
+                document.getElementById('auth-btn').innerText = isRegister ? 'Register' : 'Sign In';
+                document.getElementById('auth-toggle').innerText = isRegister ? 'Already have an account? Sign In' : "Don't have an account? Register here.";
+            }
+
+            async function submitAuth() {
+                const u = document.getElementById('auth-u').value;
+                const p = document.getElementById('auth-p').value;
+                if (isRegister) {
+                    const e = document.getElementById('auth-e').value;
+                    const res = await fetch('/api/auth/register', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({username: u, email: e, password: p})
+                    });
+                    const d = await res.json();
+                    if (res.ok) { alert("Registered! You can now log in."); toggleAuth(); }
+                    else { alert(d.detail || "Registration failed"); }
+                } else {
+                    const res = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({username: u, password: p})
+                    });
+                    const d = await res.json();
+                    if (res.ok) { closeModal('auth-modal'); checkAuth(); }
+                    else { alert(d.detail || "Login failed"); }
+                }
+            }
+
+            async function checkAuth() {
+                const res = await fetch('/api/user/me');
+                const d = await res.json();
+                if (d.authenticated) {
+                    currentUser = d.user;
+                    document.getElementById('auth-buttons').style.display = 'none';
+                    document.getElementById('user-display').style.display = 'flex';
+                    document.getElementById('user-display-name').innerText = currentUser.username;
+                    
+                    // Email verification status
+                    const emBadge = document.getElementById('email-badge');
+                    emBadge.innerText = currentUser.email_verified ? 'VERIFIED' : 'UNVERIFIED';
+                    emBadge.style.color = currentUser.email_verified ? 'var(--neon)' : 'var(--gold)';
+                    if (currentUser.email_verified) document.getElementById('email-verify-btn').style.display = 'none';
+
+                    // KYC status
+                    const kycBadge = document.getElementById('kyc-badge');
+                    kycBadge.innerText = currentUser.kyc_status;
+                    kycBadge.style.color = currentUser.kyc_status === 'VERIFIED' ? 'var(--neon)' : 'var(--gold)';
+                    if (currentUser.kyc_status === 'VERIFIED') document.getElementById('kyc-btn').style.display = 'none';
+
+                    // Admin card toggle
+                    if (currentUser.is_admin) {
+                        document.getElementById('admin-panel-card').style.display = 'block';
+                    }
+                }
+            }
+            checkAuth();
+
+            async function logout() {
+                await fetch('/api/auth/logout', {method: 'POST'});
+                location.reload();
+            }
+
+            async function submitEmailCode() {
+                const code = document.getElementById('email-code').value;
+                const res = await fetch('/api/auth/verify-email', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({code: code})
+                });
+                if (res.ok) { alert("Email Verified!"); closeModal('email-modal'); checkAuth(); }
+            }
+
+            async function submitKYC() {
+                const idNum = document.getElementById('kyc-id').value;
+                const res = await fetch('/api/user/kyc', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id_card_num: idNum})
+                });
+                if (res.ok) { alert("ID Submitted and Verified!"); closeModal('kyc-modal'); checkAuth(); }
+            }
+
+            async function saveAdminFluctuations() {
+                const mode = document.getElementById('admin-mode').value;
+                const eur = parseFloat(document.getElementById('admin-eur').value);
+                const gold = parseFloat(document.getElementById('admin-gold').value);
+                const nifty = parseFloat(document.getElementById('admin-nifty').value);
+
+                const res = await fetch('/api/admin/market-control', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        mode: mode,
+                        targets: {"EUR/USD": eur, "XAU/USD (Gold)": gold, "NIFTY 50": nifty}
+                    })
+                });
+                if (res.ok) { alert("Market Fluctuation settings applied live!"); closeModal('admin-modal'); }
             }
 
             function switchTab(viewId, el) {
@@ -611,13 +886,13 @@ def index_view():
                 if (viewId === 'chart') setTimeout(() => chart.resize(chartContainer.clientWidth, chartContainer.clientHeight), 50);
             }
 
-            function setSide(side) {
-                currentSide = side;
-                document.getElementById('btn-buy').className = side === 'BUY' ? 'side-btn active buy' : 'side-btn';
-                document.getElementById('btn-sell').className = side === 'SELL' ? 'side-btn active sell' : 'side-btn';
-                const submit = document.getElementById('btn-submit-order');
-                submit.className = side === 'BUY' ? 'btn-action' : 'btn-action sell-mode';
-                submit.innerText = `${side} ${currentSymbol}`;
+            function setSide(s) {
+                currentSide = s;
+                document.getElementById('btn-buy').className = s === 'BUY' ? 'side-btn active buy' : 'side-btn';
+                document.getElementById('btn-sell').className = s === 'SELL' ? 'side-btn active sell' : 'side-btn';
+                const sub = document.getElementById('btn-submit-order');
+                sub.className = s === 'BUY' ? 'btn-action' : 'btn-action sell-mode';
+                sub.innerText = `${s} ${currentSymbol}`;
             }
 
             function filterWatchlist(cat, el) {
@@ -676,7 +951,6 @@ def index_view():
                     `).join("");
             }
 
-            // WebSocket Live Multi-Asset Ticker Feed
             const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/market-feed`);
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
@@ -708,7 +982,7 @@ def index_view():
                 const d = await res.json();
                 const feed = document.getElementById('order-feedback');
                 if (res.ok) {
-                    feed.innerText = `✓ Filled: ${lots} Lot(s) ${currentSymbol} @ ${d.price}`;
+                    feed.innerText = `✓ Filled: ${lots} Lot(s) @ ${d.price}`;
                     feed.style.color = "var(--green)";
                     loadUserPortfolio();
                 } else {
@@ -725,22 +999,10 @@ def index_view():
                 });
                 const d = await res.json();
                 if (res.ok) {
-                    alert(`Closed position! PnL: ${activeCurrency === 'USD' ? '$' + d.pnl_usd : '₹' + d.pnl_inr}`);
+                    alert(`Closed position! PnL: $${d.pnl_usd}`);
                     loadUserPortfolio();
                 } else {
                     alert(d.detail || 'Exit failed');
-                }
-            }
-
-            async function topupWallet(amt) {
-                const res = await fetch('/api/wallet/topup', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({amount_usd: amt})
-                });
-                if (res.ok) {
-                    alert(`Simulated Wallet Reset to $${amt.toLocaleString()} USD!`);
-                    loadUserPortfolio();
                 }
             }
 
@@ -749,7 +1011,7 @@ def index_view():
                 const d = await res.json();
                 if (d.authenticated) {
                     const bal = activeCurrency === 'USD' ? `$${d.user.balance_usd.toLocaleString('en-US', {minimumFractionDigits:2})}` : `₹${d.user.balance_inr.toLocaleString('en-IN', {minimumFractionDigits:2})}`;
-                    document.getElementById('wallet-val').innerText = bal;
+                    document.getElementById('user-display-bal').innerText = bal;
 
                     const pnlVal = activeCurrency === 'USD' ? d.total_unrealized_usd : d.total_unrealized_inr;
                     const pnlSign = pnlVal >= 0 ? '+' : '';
