@@ -194,18 +194,18 @@ def index_view():
         </style>
     </head>
     <body>
-        <header>
-            <div class="brand" style="display: flex; align-items: center; gap: 10px;">
-    <svg width="34" height="34" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <polygon points="50,4 94,27 94,73 50,96 6,73 6,27" fill="#151922" stroke="#5A31F4" stroke-width="3"/>
-        <path d="M26,30 L50,75 L74,30" stroke="#00FFA3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="50" cy="75" r="5" fill="#00FFA3"/>
-    </svg>
-    <span style="font-weight: 800; font-size: 1.15rem; letter-spacing: 0.5px; color: #fff;">
-        VINTAGE<span style="color: #00FFA3; background: transparent; padding: 0;">CX</span>
-    </span>
-    <span style="background: #5A31F4; color: #fff; font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; margin-left: 4px;">PRO</span>
-</div>
+       <header>
+            <div class="brand" style="display:flex;align-items:center;gap:10px;">
+                <svg width="34" height="34" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <polygon points="50,4 94,27 94,73 50,96 6,73 6,27" fill="#151922" stroke="#5A31F4" stroke-width="3"/>
+                    <path d="M26,30 L50,75 L74,30" stroke="#00FFA3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="50" cy="75" r="5" fill="#00FFA3"/>
+                </svg>
+                <span style="font-weight:800;font-size:1.15rem;letter-spacing:0.5px;color:#fff;">
+                    VINTAGE<span style="color:#00FFA3;background:transparent;padding:0;">CX</span>
+                </span>
+                <span style="background:#5A31F4;color:#fff;font-size:0.7rem;font-weight:700;padding:2px 6px;border-radius:4px;">PRO</span>
+            </div>
             <div class="funds">
                 <div>Cash: <strong id="cash-balance" style="color:#fff;">₹1,00,000.00</strong></div>
                 <div>Portfolio: <strong id="portfolio-value" style="color:#fff;">₹1,00,000.00</strong></div>
