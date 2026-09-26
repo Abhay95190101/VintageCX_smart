@@ -3,12 +3,12 @@ import json
 import random
 import time
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from engine import Order, OrderSide, OrderType, PaperTradingEngine
 
-app = FastAPI(title="VintageCX-Style Pro Trading Terminal")
+app = FastAPI(title="VintageCX Pro Terminal")
 engine = PaperTradingEngine(initial_balance=100000.0)
 
 # Tracked Instruments
@@ -48,6 +48,41 @@ def get_portfolio():
     prices = {k: v["price"] for k, v in INSTRUMENTS.items()}
     return engine.get_portfolio_summary(prices)
 
+# --- PWA Manifest & Service Worker Endpoints for APK generation ---
+@app.get("/manifest.json")
+def manifest():
+    return JSONResponse(content={
+        "name": "VintageCX Pro",
+        "short_name": "VintageCX",
+        "description": "VintageCX Pro Trading Terminal",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0B0E14",
+        "theme_color": "#5A31F4",
+        "icons": [
+            {
+                "src": "https://img.icons8.com/color/192/stock-exchange.png",
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any maskable"
+            },
+            {
+                "src": "https://img.icons8.com/color/512/stock-exchange.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any maskable"
+            }
+        ]
+    })
+
+@app.get("/sw.js")
+def service_worker():
+    return Response(
+        content="self.addEventListener('fetch', function(e) {});",
+        media_type="application/javascript"
+    )
+
+# --- WebSocket Feed (Supports both ws:// and wss://) ---
 @app.websocket("/ws/market-feed")
 async def market_data_feed(websocket: WebSocket):
     await websocket.accept()
@@ -92,8 +127,10 @@ def index_view():
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>VintageCX | Professional Trading Terminal</title>
-        <!-- Pinned working version 4.2.1 -->
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>VintageCX Pro Terminal</title>
+        <link rel="manifest" href="/manifest.json">
+        <meta name="theme-color" content="#5A31F4">
         <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             :root {
@@ -102,60 +139,51 @@ def index_view():
                 --border-color: #242B35;
                 --text-primary: #F0F3F6;
                 --text-muted: #848E9C;
-                --VintageCX-purple: #5A31F4;
-                --VintageCX-green: #089981;
-                --VintageCX-red: #F23645;
+                --upstox-purple: #5A31F4;
+                --upstox-green: #089981;
+                --upstox-red: #F23645;
             }
             * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
             body { background: var(--bg-main); color: var(--text-primary); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-            
-            header { height: 50px; background: var(--bg-card); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
-            .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; color: #fff; }
-            .brand span { background: var(--VintageCX-purple); padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; }
-            .funds { display: flex; gap: 24px; font-size: 0.88rem; }
+            header { height: 50px; background: var(--bg-card); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+            .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; color: #fff; }
+            .brand span { background: var(--upstox-purple); padding: 3px 6px; border-radius: 4px; font-size: 0.75rem; }
+            .funds { display: flex; gap: 16px; font-size: 0.82rem; }
             .funds span { color: var(--text-muted); }
-            
             .main-container { display: flex; flex: 1; height: calc(100vh - 50px); }
-            
-            .watchlist-panel { width: 320px; border-right: 1px solid var(--border-color); background: var(--bg-card); display: flex; flex-direction: column; }
+            .watchlist-panel { width: 300px; border-right: 1px solid var(--border-color); background: var(--bg-card); display: flex; flex-direction: column; }
             .panel-header { padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 600; font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; }
             .watchlist-items { overflow-y: auto; flex: 1; }
-            .stock-item { display: flex; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border-color); cursor: pointer; transition: background 0.15s; }
+            .stock-item { display: flex; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border-color); cursor: pointer; transition: background 0.15s; }
             .stock-item:hover, .stock-item.active { background: #1C222D; }
-            .stock-name { font-weight: 600; font-size: 0.95rem; }
-            .stock-sub { font-size: 0.75rem; color: var(--text-muted); }
-            .stock-price { font-weight: 600; font-size: 0.95rem; text-align: right; }
-            
+            .stock-name { font-weight: 600; font-size: 0.9rem; }
+            .stock-sub { font-size: 0.72rem; color: var(--text-muted); }
+            .stock-price { font-weight: 600; font-size: 0.9rem; text-align: right; }
             .chart-panel { flex: 1; display: flex; flex-direction: column; background: var(--bg-main); }
-            .chart-header { padding: 12px 20px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 20px; }
-            .chart-title { font-size: 1.2rem; font-weight: 700; }
+            .chart-header { padding: 10px 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 16px; }
+            .chart-title { font-size: 1.1rem; font-weight: 700; }
             #chart-container { flex: 1; position: relative; width: 100%; height: 100%; }
-            
-            .order-panel { width: 340px; border-left: 1px solid var(--border-color); background: var(--bg-card); display: flex; flex-direction: column; padding: 16px; gap: 16px; }
+            .order-panel { width: 320px; border-left: 1px solid var(--border-color); background: var(--bg-card); display: flex; flex-direction: column; padding: 16px; gap: 14px; }
             .toggle-group { display: flex; border-radius: 6px; overflow: hidden; background: #0B0E14; padding: 2px; }
             .toggle-btn { flex: 1; padding: 8px; border: none; background: transparent; color: var(--text-muted); font-weight: 600; cursor: pointer; border-radius: 4px; }
-            .toggle-btn.active.buy { background: var(--VintageCX-green); color: white; }
-            .toggle-btn.active.sell { background: var(--VintageCX-red); color: white; }
-            
-            .form-group { display: flex; flex-direction: column; gap: 6px; }
-            label { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
-            input, select { background: #0B0E14; border: 1px solid var(--border-color); color: #fff; padding: 10px; border-radius: 6px; outline: none; font-size: 0.9rem; }
-            input:focus, select:focus { border-color: var(--VintageCX-purple); }
-            
-            .execute-btn { background: var(--VintageCX-green); border: none; color: white; font-weight: 700; padding: 12px; border-radius: 6px; cursor: pointer; margin-top: 8px; font-size: 1rem; }
-            .execute-btn.sell-mode { background: var(--VintageCX-red); }
-            
-            .holdings-container { border-top: 1px solid var(--border-color); padding-top: 16px; flex: 1; overflow-y: auto; }
-            .position-card { background: #1C222D; padding: 10px; border-radius: 6px; margin-bottom: 8px; font-size: 0.85rem; }
-            .position-card-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+            .toggle-btn.active.buy { background: var(--upstox-green); color: white; }
+            .toggle-btn.active.sell { background: var(--upstox-red); color: white; }
+            .form-group { display: flex; flex-direction: column; gap: 5px; }
+            label { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+            input, select { background: #0B0E14; border: 1px solid var(--border-color); color: #fff; padding: 8px; border-radius: 6px; outline: none; font-size: 0.88rem; }
+            .execute-btn { background: var(--upstox-green); border: none; color: white; font-weight: 700; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 0.95rem; }
+            .execute-btn.sell-mode { background: var(--upstox-red); }
+            .holdings-container { border-top: 1px solid var(--border-color); padding-top: 14px; flex: 1; overflow-y: auto; }
+            .position-card { background: #1C222D; padding: 8px; border-radius: 6px; margin-bottom: 6px; font-size: 0.82rem; }
+            .position-card-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
         </style>
     </head>
     <body>
         <header>
-            <div class="brand">VintageCX <span>Smart</span></div>
+            <div class="brand">VintageCX <span>PRO</span></div>
             <div class="funds">
-                <div>Available Cash: <strong id="cash-balance" style="color:#fff;">₹1,00,000.00</strong></div>
-                <div>Portfolio Value: <strong id="portfolio-value" style="color:#fff;">₹1,00,000.00</strong></div>
+                <div>Cash: <strong id="cash-balance" style="color:#fff;">₹1,00,000.00</strong></div>
+                <div>Portfolio: <strong id="portfolio-value" style="color:#fff;">₹1,00,000.00</strong></div>
             </div>
         </header>
 
@@ -168,7 +196,7 @@ def index_view():
             <div class="chart-panel">
                 <div class="chart-header">
                     <div class="chart-title" id="selected-symbol-title">RELIANCE</div>
-                    <div style="color: var(--text-muted); font-size: 0.85rem;">1-Second Real-Time Ticks</div>
+                    <div style="color: var(--text-muted); font-size: 0.8rem;">Live 1-Sec Ticks</div>
                 </div>
                 <div id="chart-container"></div>
             </div>
@@ -198,20 +226,24 @@ def index_view():
                 </div>
 
                 <button class="execute-btn" id="submit-btn" onclick="submitOrder()">BUY RELIANCE</button>
-                <div id="order-alert" style="font-size: 0.8rem; text-align: center;"></div>
+                <div id="order-alert" style="font-size: 0.78rem; text-align: center;"></div>
 
                 <div class="holdings-container">
-                    <div class="panel-header" style="padding-left:0; margin-bottom: 8px;">Positions & Holdings</div>
+                    <div class="panel-header" style="padding-left:0; margin-bottom: 6px;">Holdings</div>
                     <div id="positions-list"></div>
                 </div>
             </div>
         </div>
 
         <script>
+            // Register service worker for APK / PWA compatibility
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('/sw.js');
+            }
+
             let currentSymbol = "RELIANCE";
             let currentSide = "BUY";
             
-            // Set up TradingView Lightweight Chart
             const chartContainer = document.getElementById("chart-container");
             const chart = LightweightCharts.createChart(chartContainer, {
                 layout: { background: { color: "#0B0E14" }, textColor: "#848E9C" },
@@ -225,7 +257,6 @@ def index_view():
                 wickDownColor: "#F23645", wickUpColor: "#089981",
             });
 
-            // Seed historical bars
             function seedCandles(basePrice) {
                 const now = Math.floor(Date.now() / 1000);
                 const historicalData = [];
@@ -241,7 +272,6 @@ def index_view():
             }
             seedCandles(2980);
 
-            // Responsive chart resize
             window.addEventListener('resize', () => {
                 chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
             });
@@ -275,13 +305,13 @@ def index_view():
                 if (price) seedCandles(price);
             }
 
-            // WebSocket Connection
+            // Secure WebSocket for production HTTPS
             const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/market-feed`);(`ws://${location.host}/ws/market-feed`);
+            const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/market-feed`);
+            
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 
-                // Render Watchlist
                 const wl = document.getElementById("watchlist");
                 wl.innerHTML = Object.entries(data.market).map(([sym, item]) => `
                     <div class="stock-item ${sym === currentSymbol ? 'active' : ''}" id="stock-${sym}" onclick="selectStock('${sym}', ${item.price})">
@@ -293,16 +323,13 @@ const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/market-feed`);(`ws:
                     </div>
                 `).join("");
 
-                // Push new ticks to chart
                 if (data.candles[currentSymbol]) {
                     candleSeries.update(data.candles[currentSymbol]);
                 }
 
-                // Update Balances
                 document.getElementById("cash-balance").innerText = `₹${data.portfolio.cash_balance.toLocaleString('en-IN', {minimumFractionDigits: 2})}`;
                 document.getElementById("portfolio-value").innerText = `₹${data.portfolio.total_portfolio_value.toLocaleString('en-IN', {minimumFractionDigits: 2})}`;
 
-                // Update Holdings
                 const posContainer = document.getElementById("positions-list");
                 const pos = data.portfolio.positions;
                 if (!pos || pos.length === 0) {
