@@ -115,20 +115,19 @@ def manifest():
         "theme_color": "#5A31F4",
         "icons": [
             {
-                "src": "https://cdn-icons-png.flaticon.com/512/2422/2422796.png",
+                "src": "/icon.svg",
                 "sizes": "512x512",
-                "type": "image/png",
-                "purpose": "any maskable"
+                "type": "image/svg+xml",
+                "purpose": "any"
             },
             {
-                "src": "https://cdn-icons-png.flaticon.com/192/2422/2422796.png",
-                "sizes": "192x192",
-                "type": "image/png",
-                "purpose": "any maskable"
+                "src": "/icon.svg",
+                "sizes": "512x512",
+                "type": "image/svg+xml",
+                "purpose": "maskable"
             }
         ]
     })
-
 @app.get("/sw.js")
 def service_worker():
     return Response(
