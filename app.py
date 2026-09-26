@@ -115,20 +115,14 @@ def manifest():
         "theme_color": "#5A31F4",
         "icons": [
             {
-                "src": "/icon.svg",
+                "src": "https://cdn-icons-png.flaticon.com/512/2422/2422796.png",
                 "sizes": "512x512",
-                "type": "image/svg+xml",
-                "purpose": "any"
-            },
-            {
-                "src": "/icon-192.png",
-                "sizes": "192x192",
                 "type": "image/png",
                 "purpose": "any maskable"
             },
             {
-                "src": "/icon-512.png",
-                "sizes": "512x512",
+                "src": "https://cdn-icons-png.flaticon.com/192/2422/2422796.png",
+                "sizes": "192x192",
                 "type": "image/png",
                 "purpose": "any maskable"
             }
