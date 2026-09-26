@@ -50,46 +50,30 @@ def get_portfolio():
     prices = {k: v["price"] for k, v in INSTRUMENTS.items()}
     return engine.get_portfolio_summary(prices)
 
-# --- Dynamic True PNG Generation (Zero dependencies, 512x512 Pure Binary) ---
 def generate_png_icon():
     width, height = 512, 512
     raw_rows = bytearray()
-    
     for y in range(height):
-        raw_rows.append(0)  # PNG Filter byte: None
+        raw_rows.append(0)
         for x in range(width):
             dx = (x - 256) / 256
             dy = (y - 256) / 256
             dist = (dx * dx + dy * dy) ** 0.5
-            
-            # Stylized Fintech Dark Badge with Glowing Border & Neon Center
             if dist < 0.90:
                 if 0.82 <= dist <= 0.88:
-                    # Outer Neon Purple / Mint Gradient border
-                    r = int(90 + 50 * dx)
-                    g = int(49 + 180 * (dy + 1) / 2)
-                    b = 244
-                    a = 255
+                    r, g, b, a = int(90 + 50 * dx), int(49 + 180 * (dy + 1) / 2), 244, 255
                 elif abs(dx) + abs(dy) < 0.35 and dy > -0.2:
-                    # Central Cyan/Mint "V" Apex Glow
                     r, g, b, a = 0, 255, 163, 255
                 else:
-                    # Deep Terminal Carbon Surface
                     r, g, b, a = 11, 14, 20, 255
             else:
                 r, g, b, a = 0, 0, 0, 0
-                
             raw_rows.extend([r, g, b, a])
-            
     compressed = zlib.compress(raw_rows, level=6)
-    
     png = bytearray(b"\x89PNG\r\n\x1a\n")
-    # IHDR
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
     png.extend(struct.pack(">I", 13) + b"IHDR" + ihdr + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr) & 0xFFFFFFFF))
-    # IDAT
     png.extend(struct.pack(">I", len(compressed)) + b"IDAT" + compressed + struct.pack(">I", zlib.crc32(b"IDAT" + compressed) & 0xFFFFFFFF))
-    # IEND
     png.extend(struct.pack(">I", 0) + b"IEND" + struct.pack(">I", zlib.crc32(b"IEND") & 0xFFFFFFFF))
     return bytes(png)
 
@@ -104,44 +88,23 @@ def get_icon():
 def get_icon_192():
     return Response(content=DYNAMIC_ICON_PNG, media_type="image/png")
 
-# --- PWA Manifest & Service Worker ---
 @app.get("/manifest.json")
 def manifest():
     return JSONResponse(content={
         "name": "VintageCX Pro Terminal",
         "short_name": "VintageCX",
         "id": "/",
-        "description": "Next-Gen Paper Trading & Risk Management Terminal",
+        "description": "Next-Gen Mobile Paper Trading Terminal",
         "start_url": "/",
         "display": "standalone",
         "orientation": "portrait",
         "background_color": "#0B0E14",
         "theme_color": "#5A31F4",
         "icons": [
-            {
-                "src": "/icon-192.png",
-                "sizes": "192x192",
-                "type": "image/png",
-                "purpose": "any"
-            },
-            {
-                "src": "/icon-192.png",
-                "sizes": "192x192",
-                "type": "image/png",
-                "purpose": "maskable"
-            },
-            {
-                "src": "/icon-512.png",
-                "sizes": "512x512",
-                "type": "image/png",
-                "purpose": "any"
-            },
-            {
-                "src": "/icon-512.png",
-                "sizes": "512x512",
-                "type": "image/png",
-                "purpose": "maskable"
-            }
+            {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
         ]
     })
 
@@ -149,7 +112,6 @@ def manifest():
 def service_worker():
     return Response(content="self.addEventListener('fetch', function(e) {});", media_type="application/javascript")
 
-# --- Real-Time Market WebSocket ---
 @app.websocket("/ws/market-feed")
 async def market_data_feed(websocket: WebSocket):
     await websocket.accept()
@@ -174,7 +136,6 @@ async def market_data_feed(websocket: WebSocket):
                 c["close"] = new_price
 
             prices = {k: v["price"] for k, v in INSTRUMENTS.items()}
-            
             await websocket.send_text(json.dumps({
                 "type": "TICK",
                 "market": INSTRUMENTS,
@@ -185,7 +146,6 @@ async def market_data_feed(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
 
-# --- High Performance Frontend Terminal ---
 @app.get("/", response_class=HTMLResponse)
 def index_view():
     return """
@@ -193,11 +153,13 @@ def index_view():
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
         <title>VintageCX Pro Terminal</title>
         <link rel="manifest" href="/manifest.json">
         <link rel="icon" type="image/png" href="/icon-512.png">
-        <meta name="theme-color" content="#5A31F4">
+        <meta name="theme-color" content="#0B0E14">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
         <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             :root {
@@ -211,206 +173,208 @@ def index_view():
                 --trade-green: #089981;
                 --trade-red: #F23645;
             }
-            * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-            body { background: var(--bg-main); color: var(--text-primary); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+            * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+            body { background: var(--bg-main); color: var(--text-primary); display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
 
-            /* --- Header & Animated Branding --- */
-            header { height: 56px; background: var(--bg-card); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; z-index: 100; }
-            .header-left { display: flex; align-items: center; gap: 14px; }
-            .menu-toggle { background: transparent; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s; }
-            .menu-toggle:hover { background: #1C222E; }
-            
-            .brand-container { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-            .logo-icon { width: 34px; height: 34px; border-radius: 8px; animation: logoIntro 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards, logoPulse 3s ease-in-out infinite 1.2s; }
-            
-            @keyframes logoIntro {
-                0% { transform: scale(0.2) rotate(-90deg); opacity: 0; filter: drop-shadow(0 0 0px var(--neon-green)); }
-                70% { transform: scale(1.15) rotate(10deg); opacity: 1; }
-                100% { transform: scale(1) rotate(0deg); opacity: 1; filter: drop-shadow(0 0 12px rgba(0, 255, 163, 0.45)); }
-            }
-            @keyframes logoPulse {
-                0%, 100% { filter: drop-shadow(0 0 6px rgba(0, 255, 163, 0.3)); }
-                50% { filter: drop-shadow(0 0 18px rgba(90, 49, 244, 0.7)); }
-            }
+            /* Header */
+            header { height: 52px; background: var(--bg-card); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; z-index: 10; flex-shrink: 0; }
+            .header-left { display: flex; align-items: center; gap: 8px; }
+            .menu-toggle { background: transparent; border: none; color: #fff; font-size: 1.4rem; cursor: pointer; padding: 4px; }
+            .logo-icon { width: 30px; height: 30px; border-radius: 6px; animation: logoIntro 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+            @keyframes logoIntro { 0% { transform: scale(0.2); opacity: 0; } 100% { transform: scale(1); opacity: 1; filter: drop-shadow(0 0 10px rgba(0, 255, 163, 0.45)); } }
+            .brand-name { font-weight: 800; font-size: 1.05rem; }
+            .badge-pro { background: var(--neon-purple); color: #fff; font-size: 0.65rem; font-weight: 800; padding: 2px 5px; border-radius: 4px; margin-left: 3px; }
+            .header-right { text-align: right; }
+            .cash-text { font-size: 0.72rem; color: var(--text-muted); }
+            .cash-num { font-size: 0.85rem; font-weight: 700; color: #fff; }
 
-            .brand-name { font-weight: 800; font-size: 1.15rem; letter-spacing: 0.5px; }
-            .badge-pro { background: var(--neon-purple); color: #fff; font-size: 0.68rem; font-weight: 800; padding: 2px 6px; border-radius: 4px; margin-left: 4px; }
-
-            .header-metrics { display: flex; align-items: center; gap: 20px; font-size: 0.85rem; }
-            .pnl-badge { padding: 4px 10px; border-radius: 6px; font-weight: 700; background: rgba(8, 153, 129, 0.15); color: var(--trade-green); }
-            .pnl-badge.negative { background: rgba(242, 54, 69, 0.15); color: var(--trade-red); }
-
-            /* --- Slide-Out Insight & Risk Drawer --- */
-            .drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 200; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+            /* Drawer */
+            .drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(4px); z-index: 200; opacity: 0; pointer-events: none; transition: opacity 0.25s ease; }
             .drawer-overlay.active { opacity: 1; pointer-events: auto; }
-            .drawer { position: fixed; top: 0; left: -360px; width: 340px; height: 100vh; background: var(--bg-card); z-index: 201; border-right: 1px solid var(--border-color); padding: 24px; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); display: flex; flex-direction: column; gap: 20px; box-shadow: 10px 0 30px rgba(0,0,0,0.5); }
-            .drawer.active { transform: translateX(360px); }
-            .drawer-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 14px; }
-            .card-section { background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; }
-            .card-title { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 10px; letter-spacing: 0.5px; }
+            .drawer { position: fixed; top: 0; left: -320px; width: 300px; height: 100%; background: var(--bg-card); z-index: 201; border-right: 1px solid var(--border-color); padding: 20px; transition: transform 0.25s ease-out; display: flex; flex-direction: column; gap: 16px; }
+            .drawer.active { transform: translateX(320px); }
+            .card-section { background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; }
+            .card-title { font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 8px; }
 
-            /* --- Main Body Layout --- */
-            .main-container { display: flex; flex: 1; height: calc(100vh - 56px); }
-            .watchlist-panel { width: 280px; border-right: 1px solid var(--border-color); background: var(--bg-card); display: flex; flex-direction: column; }
-            .watchlist-items { overflow-y: auto; flex: 1; }
-            .stock-item { display: flex; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border-color); cursor: pointer; transition: background 0.15s; }
-            .stock-item:hover, .stock-item.active { background: #1C222E; }
-            
-            .chart-panel { flex: 1; display: flex; flex-direction: column; background: var(--bg-main); }
-            .chart-header { padding: 12px 18px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
-            #chart-container { flex: 1; width: 100%; height: 100%; }
+            /* Layout Panes */
+            .views-container { flex: 1; position: relative; overflow: hidden; }
+            .view-pane { position: absolute; inset: 0; display: none; flex-direction: column; background: var(--bg-main); overflow-y: auto; }
+            .view-pane.active { display: flex; }
 
-            .order-panel { width: 320px; border-left: 1px solid var(--border-color); background: var(--bg-card); display: flex; flex-direction: column; padding: 16px; gap: 14px; }
+            /* Stock Header */
+            .chart-bar { padding: 10px 14px; background: var(--bg-card); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+            #chart-container { flex: 1; width: 100%; min-height: 280px; }
+
+            /* Watchlist Items */
+            .stock-item { display: flex; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border-color); cursor: pointer; }
+            .stock-item:active { background: #1C222E; }
+
+            /* Order Form */
+            .trade-box { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
             .toggle-group { display: flex; border-radius: 6px; overflow: hidden; background: #0B0E14; padding: 2px; }
-            .toggle-btn { flex: 1; padding: 8px; border: none; background: transparent; color: var(--text-muted); font-weight: 700; cursor: pointer; border-radius: 4px; }
+            .toggle-btn { flex: 1; padding: 10px; border: none; background: transparent; color: var(--text-muted); font-weight: 700; cursor: pointer; border-radius: 4px; font-size: 0.9rem; }
             .toggle-btn.active.buy { background: var(--trade-green); color: white; }
             .toggle-btn.active.sell { background: var(--trade-red); color: white; }
-
             .input-box { display: flex; flex-direction: column; gap: 5px; }
             .input-box label { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
-            .input-box input, .input-box select { background: #0B0E14; border: 1px solid var(--border-color); color: #fff; padding: 9px; border-radius: 6px; outline: none; font-size: 0.9rem; }
-            .btn-submit { background: var(--trade-green); border: none; color: #fff; font-weight: 700; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 0.95rem; margin-top: 6px; }
-            .btn-submit.sell-mode { background: var(--trade-red); }
+            .input-box input, .input-box select { background: #0B0E14; border: 1px solid var(--border-color); color: #fff; padding: 12px; border-radius: 6px; outline: none; font-size: 1rem; }
+            .btn-action { background: var(--trade-green); border: none; color: #fff; font-weight: 800; padding: 14px; border-radius: 6px; cursor: pointer; font-size: 1rem; margin-top: 6px; }
+            .btn-action.sell-mode { background: var(--trade-red); }
 
-            .progress-bar-bg { width: 100%; height: 6px; background: #232A36; border-radius: 3px; overflow: hidden; margin-top: 6px; }
-            .progress-bar-fill { height: 100%; width: 28%; background: var(--neon-green); transition: width 0.3s; }
+            /* Mobile Bottom Navigation Bar */
+            .bottom-nav { height: 56px; background: var(--bg-card); border-top: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-around; flex-shrink: 0; z-index: 10; padding-bottom: env(safe-area-inset-bottom); }
+            .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; background: none; border: none; color: var(--text-muted); font-size: 0.72rem; font-weight: 600; cursor: pointer; height: 100%; }
+            .nav-item svg { width: 19px; height: 19px; fill: currentColor; }
+            .nav-item.active { color: var(--neon-green); }
+
+            /* Desktop Responsive Fixes */
+            @media (min-width: 900px) {
+                .bottom-nav { display: none; }
+                .views-container { display: flex; }
+                .view-pane { position: static; display: flex !important; }
+                #view-watchlist { width: 280px; border-right: 1px solid var(--border-color); }
+                #view-chart { flex: 1; }
+                #view-trade { width: 320px; border-left: 1px solid var(--border-color); }
+                #view-portfolio { display: none !important; }
+            }
         </style>
     </head>
     <body>
-        <!-- Header -->
         <header>
             <div class="header-left">
                 <button class="menu-toggle" onclick="toggleDrawer()">☰</button>
-                <div class="brand-container" onclick="toggleDrawer()">
-                    <img src="/icon-512.png" alt="VintageCX" class="logo-icon">
-                    <div class="brand-name">VINTAGE<span style="color:var(--neon-green)">CX</span><span class="badge-pro">PRO</span></div>
+                <div style="display:flex; align-items:center; gap:6px;" onclick="toggleDrawer()">
+                    <img src="/icon-512.png" alt="Logo" class="logo-icon">
+                    <span class="brand-name">VINTAGE<span style="color:var(--neon-green)">CX</span><span class="badge-pro">PRO</span></span>
                 </div>
             </div>
-            
-            <div class="header-metrics">
-                <div>Cash: <strong id="cash-balance">₹1,00,000.00</strong></div>
-                <div class="pnl-badge" id="net-pnl-badge">P&L: +₹0.00 (0.00%)</div>
+            <div class="header-right">
+                <div class="cash-text">Available Margin</div>
+                <div class="cash-num" id="cash-balance">₹1,00,000.00</div>
             </div>
         </header>
 
-        <!-- Slide-out Menu: Insights & Risk Management -->
+        <!-- Insights Drawer -->
         <div class="drawer-overlay" id="drawer-overlay" onclick="toggleDrawer()"></div>
         <div class="drawer" id="side-drawer">
-            <div class="drawer-header">
-                <h3>Terminal Insights</h3>
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); padding-bottom:10px;">
+                <h3 style="font-size:1.1rem;">Terminal Insights</h3>
                 <button class="menu-toggle" onclick="toggleDrawer()">✕</button>
             </div>
-
-            <!-- Portfolio Insight -->
             <div class="card-section">
                 <div class="card-title">Portfolio Analytics</div>
-                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                    <span style="color:var(--text-muted); font-size:0.85rem;">Total Portfolio</span>
+                <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:0.85rem;">
+                    <span style="color:var(--text-muted);">Total Portfolio</span>
                     <strong id="drawer-portfolio-val">₹1,00,000.00</strong>
                 </div>
-                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                    <span style="color:var(--text-muted); font-size:0.85rem;">Available Margin</span>
-                    <span style="color:var(--neon-green); font-size:0.85rem;" id="drawer-margin-val">₹1,00,000.00</span>
-                </div>
-                <div style="display:flex; justify-content:space-between;">
-                    <span style="color:var(--text-muted); font-size:0.85rem;">Engine Status</span>
-                    <span style="color:var(--neon-green); font-size:0.85rem;">● Paper Real-Time</span>
+                <div style="display:flex; justify-content:space-between; font-size:0.85rem;">
+                    <span style="color:var(--text-muted);">Unrealized P&L</span>
+                    <span id="drawer-unrealized-pnl" style="color:var(--trade-green); font-weight:700;">+₹0.00 (0.00%)</span>
                 </div>
             </div>
-
-            <!-- Risk Management -->
             <div class="card-section">
                 <div class="card-title">Risk Management Shield</div>
-                <div style="font-size:0.82rem; margin-bottom: 6px; display:flex; justify-content:space-between;">
-                    <span>Daily Drawdown Limit</span>
-                    <span style="color:#F23645;">₹5,000.00</span>
+                <div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:6px;">
+                    <span style="color:var(--text-muted);">Daily Drawdown</span>
+                    <span style="color:var(--neon-green);">0.0% / Max ₹5,000</span>
                 </div>
-                <div class="progress-bar-bg">
-                    <div class="progress-bar-fill" id="drawdown-progress"></div>
-                </div>
-                <div style="display:flex; justify-content:space-between; margin-top:12px; font-size:0.82rem;">
-                    <span style="color:var(--text-muted);">Max Order Size</span>
+                <div style="display:flex; justify-content:space-between; font-size:0.85rem;">
+                    <span style="color:var(--text-muted);">Max Order Limit</span>
                     <span>500 Qty</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; margin-top:6px; font-size:0.82rem;">
-                    <span style="color:var(--text-muted);">Exposure Buffer</span>
-                    <span style="color:var(--neon-green);">HEALTHY</span>
-                </div>
-            </div>
-
-            <!-- P&L Insight -->
-            <div class="card-section">
-                <div class="card-title">Profit & Loss Summary</div>
-                <div style="display:flex; justify-content:space-between; font-size:0.9rem; font-weight:700;">
-                    <span>Unrealized P&L</span>
-                    <span id="drawer-unrealized-pnl" style="color:var(--trade-green);">₹0.00</span>
                 </div>
             </div>
         </div>
 
-        <!-- Terminal Workspace -->
-        <div class="main-container">
-            <!-- Watchlist -->
-            <div class="watchlist-panel">
-                <div style="padding:12px 16px; border-bottom:1px solid var(--border-color); font-weight:700; font-size:0.8rem; color:var(--text-muted);">MARKET WATCH (NSE)</div>
-                <div class="watchlist-items" id="watchlist"></div>
-            </div>
-
-            <!-- Chart -->
-            <div class="chart-panel">
-                <div class="chart-header">
+        <!-- Dynamic Views -->
+        <div class="views-container">
+            <!-- 1. Chart View (Default on Mobile) -->
+            <div class="view-pane active" id="view-chart">
+                <div class="chart-bar">
                     <div>
-                        <span id="selected-sym" style="font-size:1.2rem; font-weight:800;">RELIANCE</span>
-                        <span style="color:var(--text-muted); font-size:0.8rem; margin-left:8px;">NSE EQ REAL-TIME</span>
+                        <strong id="selected-sym" style="font-size:1.1rem;">RELIANCE</strong>
+                        <span style="color:var(--text-muted); font-size:0.75rem; margin-left:6px;">NSE</span>
                     </div>
                     <div id="sym-price" style="font-weight:700; font-size:1.1rem; color:var(--neon-green);">₹2,980.50</div>
                 </div>
                 <div id="chart-container"></div>
             </div>
 
-            <!-- Order & Risk Execution -->
-            <div class="order-panel">
-                <div class="toggle-group">
-                    <button class="toggle-btn active buy" id="tab-buy" onclick="setSide('BUY')">BUY</button>
-                    <button class="toggle-btn" id="tab-sell" onclick="setSide('SELL')">SELL</button>
-                </div>
+            <!-- 2. Watchlist View -->
+            <div class="view-pane" id="view-watchlist">
+                <div style="padding:10px 16px; border-bottom:1px solid var(--border-color); font-size:0.75rem; color:var(--text-muted); font-weight:700;">NSE INSTRUMENTS</div>
+                <div id="watchlist-list"></div>
+            </div>
 
-                <div class="input-box">
-                    <label>Order Type</label>
-                    <select id="order-type">
-                        <option value="MARKET">Market</option>
-                        <option value="LIMIT">Limit</option>
-                    </select>
+            <!-- 3. Trade Execution View -->
+            <div class="view-pane" id="view-trade">
+                <div class="trade-box">
+                    <div class="toggle-group">
+                        <button class="toggle-btn active buy" id="tab-buy" onclick="setSide('BUY')">BUY</button>
+                        <button class="toggle-btn" id="tab-sell" onclick="setSide('SELL')">SELL</button>
+                    </div>
+                    <div class="input-box">
+                        <label>Order Type</label>
+                        <select id="order-type">
+                            <option value="MARKET">Market</option>
+                            <option value="LIMIT">Limit</option>
+                        </select>
+                    </div>
+                    <div class="input-box">
+                        <label>Quantity (Max 500)</label>
+                        <input type="number" id="order-qty" value="1" min="1" max="500">
+                    </div>
+                    <div class="input-box">
+                        <label>Price (₹)</label>
+                        <input type="number" id="order-price" value="0.0" step="0.05">
+                    </div>
+                    <button class="btn-action" id="submit-btn" onclick="submitOrder()">BUY RELIANCE</button>
+                    <div id="order-feedback" style="font-size:0.85rem; text-align:center;"></div>
                 </div>
+            </div>
 
-                <div class="input-box">
-                    <label>Quantity</label>
-                    <input type="number" id="order-qty" value="1" min="1" max="500">
-                </div>
-
-                <div class="input-box">
-                    <label>Price</label>
-                    <input type="number" id="order-price" value="0.0" step="0.05">
-                </div>
-
-                <button class="btn-submit" id="submit-btn" onclick="submitOrder()">BUY RELIANCE</button>
-                <div id="order-feedback" style="font-size:0.8rem; text-align:center;"></div>
-
-                <div style="border-top:1px solid var(--border-color); padding-top:10px; flex:1; overflow-y:auto;">
-                    <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700; margin-bottom:8px;">OPEN POSITIONS</div>
-                    <div id="positions-container"></div>
-                </div>
+            <!-- 4. Positions / Portfolio View -->
+            <div class="view-pane" id="view-portfolio">
+                <div style="padding:10px 16px; border-bottom:1px solid var(--border-color); font-size:0.75rem; color:var(--text-muted); font-weight:700;">OPEN POSITIONS</div>
+                <div id="positions-list" style="padding:12px;"></div>
             </div>
         </div>
 
+        <!-- Mobile Bottom Tabs -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" onclick="switchTab('chart', this)">
+                <svg viewBox="0 0 24 24"><path d="M3.5 18.5l6-6 4 4 7-7-1.5-1.5-5.5 5.5-4-4-7.5 7.5z"/></svg>
+                <span>Chart</span>
+            </button>
+            <button class="nav-item" onclick="switchTab('watchlist', this)">
+                <svg viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+                <span>Watchlist</span>
+            </button>
+            <button class="nav-item" onclick="switchTab('trade', this)">
+                <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+                <span>Trade</span>
+            </button>
+            <button class="nav-item" onclick="switchTab('portfolio', this)">
+                <svg viewBox="0 0 24 24"><path d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/></svg>
+                <span>Portfolio</span>
+            </button>
+        </nav>
+
         <script>
-            if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.register('/sw.js');
-            }
+            if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 
             function toggleDrawer() {
                 document.getElementById('side-drawer').classList.toggle('active');
                 document.getElementById('drawer-overlay').classList.toggle('active');
+            }
+
+            function switchTab(viewId, el) {
+                document.querySelectorAll('.view-pane').forEach(p => p.classList.remove('active'));
+                document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+                document.getElementById('view-' + viewId).classList.add('active');
+                if (el) el.classList.add('active');
+                if (viewId === 'chart') {
+                    setTimeout(() => chart.resize(chartContainer.clientWidth, chartContainer.clientHeight), 50);
+                }
             }
 
             let currentSymbol = "RELIANCE";
@@ -457,12 +421,12 @@ def index_view():
                 if (side === "BUY") {
                     buyBtn.className = "toggle-btn active buy";
                     sellBtn.className = "toggle-btn";
-                    submitBtn.className = "btn-submit";
+                    submitBtn.className = "btn-action";
                     submitBtn.innerText = `BUY ${currentSymbol}`;
                 } else {
                     sellBtn.className = "toggle-btn active sell";
                     buyBtn.className = "toggle-btn";
-                    submitBtn.className = "btn-submit sell-mode";
+                    submitBtn.className = "btn-action sell-mode";
                     submitBtn.innerText = `SELL ${currentSymbol}`;
                 }
             }
@@ -472,10 +436,8 @@ def index_view():
                 document.getElementById("selected-sym").innerText = sym;
                 document.getElementById("sym-price").innerText = `₹${price.toFixed(2)}`;
                 setSide(currentSide);
-                document.querySelectorAll(".stock-item").forEach(el => el.classList.remove("active"));
-                const target = document.getElementById(`stock-${sym}`);
-                if (target) target.classList.add("active");
                 seedData(price);
+                switchTab('chart', document.querySelector('.nav-item'));
             }
 
             const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -484,15 +446,15 @@ def index_view():
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
 
-                // Watchlist render
-                const wl = document.getElementById("watchlist");
+                // Watchlist
+                const wl = document.getElementById("watchlist-list");
                 wl.innerHTML = Object.entries(data.market).map(([sym, item]) => `
-                    <div class="stock-item ${sym === currentSymbol ? 'active' : ''}" id="stock-${sym}" onclick="selectStock('${sym}', ${item.price})">
+                    <div class="stock-item" onclick="selectStock('${sym}', ${item.price})">
                         <div>
-                            <div style="font-weight:700; font-size:0.9rem;">${sym}</div>
+                            <div style="font-weight:700; font-size:0.95rem;">${sym}</div>
                             <div style="font-size:0.7rem; color:var(--text-muted);">NSE EQ</div>
                         </div>
-                        <div style="font-weight:700; text-align:right;">₹${item.price.toFixed(2)}</div>
+                        <div style="font-weight:700; font-size:0.95rem; text-align:right;">₹${item.price.toFixed(2)}</div>
                     </div>
                 `).join("");
 
@@ -501,34 +463,29 @@ def index_view():
                     document.getElementById("sym-price").innerText = `₹${data.candles[currentSymbol].close.toFixed(2)}`;
                 }
 
-                // Balance & PnL updates
+                // Balance & PnL
                 const cash = data.portfolio.cash_balance;
                 const total = data.portfolio.total_portfolio_value;
                 const pnl = total - 100000.0;
                 const pnlPercent = (pnl / 100000.0) * 100;
 
                 document.getElementById("cash-balance").innerText = `₹${cash.toLocaleString('en-IN', {minimumFractionDigits: 2})}`;
-                document.getElementById("drawer-margin-val").innerText = `₹${cash.toLocaleString('en-IN', {minimumFractionDigits: 2})}`;
                 document.getElementById("drawer-portfolio-val").innerText = `₹${total.toLocaleString('en-IN', {minimumFractionDigits: 2})}`;
                 
-                const pnlBadge = document.getElementById("net-pnl-badge");
-                pnlBadge.innerText = `P&L: ${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`;
-                pnlBadge.className = pnl >= 0 ? "pnl-badge" : "pnl-badge negative";
-
                 const drawerPnl = document.getElementById("drawer-unrealized-pnl");
-                drawerPnl.innerText = `${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`;
+                drawerPnl.innerText = `${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`;
                 drawerPnl.style.color = pnl >= 0 ? "var(--trade-green)" : "var(--trade-red)";
 
                 // Positions
-                const pContainer = document.getElementById("positions-container");
+                const pContainer = document.getElementById("positions-list");
                 const pos = data.portfolio.positions;
                 if (!pos || pos.length === 0) {
-                    pContainer.innerHTML = `<div style="color:var(--text-muted); font-size:0.8rem;">No open positions</div>`;
+                    pContainer.innerHTML = `<div style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:20px;">No open positions</div>`;
                 } else {
                     pContainer.innerHTML = pos.map(p => `
-                        <div style="background:#1C222E; padding:8px; border-radius:6px; margin-bottom:6px; font-size:0.82rem;">
-                            <div style="display:flex; justify-content:space-between;"><strong>${p.symbol}</strong><span>Qty: ${p.quantity}</span></div>
-                            <div style="display:flex; justify-content:space-between; color:var(--text-muted); margin-top:2px;">
+                        <div style="background:#141822; border:1px solid #232A36; padding:12px; border-radius:8px; margin-bottom:8px;">
+                            <div style="display:flex; justify-content:space-between; font-weight:700;"><span>${p.symbol}</span><span>Qty: ${p.quantity}</span></div>
+                            <div style="display:flex; justify-content:space-between; color:var(--text-muted); font-size:0.85rem; margin-top:4px;">
                                 <span>LTP: ₹${p.current_price.toFixed(2)}</span>
                                 <span style="color:#089981;">₹${p.market_value.toFixed(2)}</span>
                             </div>
@@ -539,11 +496,6 @@ def index_view():
 
             async function submitOrder() {
                 const qty = parseInt(document.getElementById("order-qty").value);
-                if (qty > 500) {
-                    alert("Risk Limit: Maximum 500 quantity allowed per execution!");
-                    return;
-                }
-
                 const payload = {
                     symbol: currentSymbol,
                     side: currentSide,
