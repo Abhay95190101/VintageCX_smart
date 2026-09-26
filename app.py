@@ -33,6 +33,17 @@ def init_db():
         )
     """)
     c.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            type TEXT,
+            amount_usd REAL,
+            currency TEXT DEFAULT 'USD',
+            status TEXT DEFAULT 'SUCCESS',
+            timestamp INTEGER
+        )
+    """)
+    c.execute("""
         CREATE TABLE IF NOT EXISTS positions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -161,6 +172,10 @@ class KYCPayload(BaseModel):
 class VerifyEmailPayload(BaseModel):
     code: str
 
+class FundActionPayload(BaseModel):
+    amount: float = Field(gt=0)
+    currency: str = "USD"
+
 class AdminMarketPayload(BaseModel):
     mode: str
     targets: dict = {}
@@ -250,6 +265,10 @@ def get_user_me(user: dict = Depends(get_current_user)):
     
     c.execute("SELECT id, symbol, category, side, lots, units, entry_price, currency FROM positions WHERE user_id = ? AND status = 'OPEN'", (user["id"],))
     pos_rows = c.fetchall()
+
+    # Recent transactions
+    c.execute("SELECT type, amount_usd, currency, status, timestamp FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 5", (user["id"],))
+    tx_rows = c.fetchall()
     conn.close()
 
     positions = []
@@ -269,13 +288,69 @@ def get_user_me(user: dict = Depends(get_current_user)):
             "pnl_usd": round(pnl_usd, 2), "pnl_inr": round(pnl_usd * USD_INR_RATE, 2)
         })
 
+    transactions = [
+        {"type": tx[0], "amount_usd": tx[1], "currency": tx[2], "status": tx[3], "timestamp": tx[4]}
+        for tx in tx_rows
+    ]
+
     return {
         "authenticated": True,
         "user": user,
         "positions": positions,
+        "transactions": transactions,
         "total_unrealized_usd": round(total_unrealized_usd, 2),
         "total_unrealized_inr": round(total_unrealized_usd * USD_INR_RATE, 2)
     }
+
+# --- Deposit & Withdrawal Handlers ---
+@app.post("/api/wallet/deposit")
+def wallet_deposit(data: FundActionPayload, user: dict = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=401, detail="Please log in first")
+    
+    amount_usd = data.amount if data.currency == "USD" else (data.amount / USD_INR_RATE)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE users SET balance_usd = balance_usd + ? WHERE id = ?", (amount_usd, user["id"]))
+    c.execute("""
+        INSERT INTO transactions (user_id, type, amount_usd, currency, status, timestamp)
+        VALUES (?, 'DEPOSIT', ?, ?, 'SUCCESS', ?)
+    """, (user["id"], amount_usd, data.currency, int(time.time())))
+    c.execute("SELECT balance_usd FROM users WHERE id = ?", (user["id"],))
+    new_bal = c.fetchone()[0]
+    conn.commit()
+    conn.close()
+    user["balance_usd"] = new_bal
+    return {"status": "SUCCESS", "new_balance_usd": new_bal, "new_balance_inr": round(new_bal * USD_INR_RATE, 2)}
+
+@app.post("/api/wallet/withdraw")
+def wallet_withdraw(data: FundActionPayload, user: dict = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=401, detail="Please log in first")
+    if user.get("kyc_status") != "VERIFIED":
+        raise HTTPException(status_code=400, detail="Identity Verification (KYC) is required prior to withdrawals")
+    
+    amount_usd = data.amount if data.currency == "USD" else (data.amount / USD_INR_RATE)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT balance_usd FROM users WHERE id = ?", (user["id"],))
+    current_bal = c.fetchone()[0]
+
+    if current_bal < amount_usd:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Insufficient wallet balance")
+    
+    c.execute("UPDATE users SET balance_usd = balance_usd - ? WHERE id = ?", (amount_usd, user["id"]))
+    c.execute("""
+        INSERT INTO transactions (user_id, type, amount_usd, currency, status, timestamp)
+        VALUES (?, 'WITHDRAWAL', ?, ?, 'SUCCESS', ?)
+    """, (user["id"], amount_usd, data.currency, int(time.time())))
+    c.execute("SELECT balance_usd FROM users WHERE id = ?", (user["id"],))
+    new_bal = c.fetchone()[0]
+    conn.commit()
+    conn.close()
+    user["balance_usd"] = new_bal
+    return {"status": "SUCCESS", "new_balance_usd": new_bal, "new_balance_inr": round(new_bal * USD_INR_RATE, 2)}
 
 @app.post("/api/user/kyc")
 def submit_kyc(data: KYCPayload, user: dict = Depends(get_current_user)):
@@ -500,6 +575,10 @@ def index_view():
             .modal-title { font-size: 1.1rem; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
             .modal-close { background: none; border: none; color: var(--text-muted); font-size: 1.3rem; cursor: pointer; }
 
+            .preset-chips { display: flex; gap: 8px; }
+            .preset-chip { flex: 1; background: #0B0E14; border: 1px solid var(--border); color: var(--text-muted); padding: 8px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; cursor: pointer; }
+            .preset-chip:hover { border-color: var(--neon); color: #fff; }
+
             @media (min-width: 900px) {
                 .bottom-nav { display: none; }
                 .view-pane { position: static; display: flex !important; }
@@ -537,12 +616,22 @@ def index_view():
             </div>
         </header>
 
-        <!-- Slide Drawer: Profile, KYC, Email & Admin Controls -->
+        <!-- Slide Drawer: Profile, Wallet (Deposit/Withdraw), KYC & Admin Controls -->
         <div class="modal-overlay" id="drawer-overlay" onclick="toggleDrawer()" style="z-index:200;"></div>
-        <div style="position:fixed; top:0; left:-320px; width:300px; height:100%; background:var(--bg-card); z-index:201; border-right:1px solid var(--border); padding:20px; transition:transform 0.25s; display:flex; flex-direction:column; gap:14px;" id="side-drawer">
+        <div style="position:fixed; top:0; left:-320px; width:300px; height:100%; background:var(--bg-card); z-index:201; border-right:1px solid var(--border); padding:20px; transition:transform 0.25s; display:flex; flex-direction:column; gap:14px; overflow-y:auto;" id="side-drawer">
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px;">
-                <h3 style="font-size:1.1rem;">Account Center</h3>
+                <h3 style="font-size:1.1rem;">Account Hub</h3>
                 <button class="menu-btn" onclick="toggleDrawer()">✕</button>
+            </div>
+
+            <!-- Wallet Banking Panel -->
+            <div style="background:var(--bg-main); border:1px solid var(--border); border-radius:8px; padding:12px;">
+                <div style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">WALLET BALANCE</div>
+                <div style="font-size:1.3rem; font-weight:800; color:var(--neon); margin:4px 0 10px 0;" id="drawer-balance">$50,000.00</div>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn-action" style="flex:1; padding:8px; font-size:0.8rem; margin:0;" onclick="openModal('deposit-modal')">+ Deposit</button>
+                    <button class="btn-action" style="flex:1; padding:8px; font-size:0.8rem; margin:0; background:#242B35;" onclick="openModal('withdraw-modal')">Withdraw</button>
+                </div>
             </div>
 
             <!-- Email Verification Card -->
@@ -560,6 +649,14 @@ def index_view():
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
                     <span id="kyc-badge" style="font-weight:700; font-size:0.85rem; color:var(--gold);">UNVERIFIED</span>
                     <button class="btn-auth" id="kyc-btn" style="padding:4px 8px; font-size:0.7rem;" onclick="openModal('kyc-modal')">Submit ID</button>
+                </div>
+            </div>
+
+            <!-- Recent Transactions Mini Log -->
+            <div style="background:var(--bg-main); border:1px solid var(--border); border-radius:8px; padding:12px;">
+                <div style="font-size:0.72rem; color:var(--text-muted); font-weight:700; margin-bottom:8px;">RECENT TRANSACTIONS</div>
+                <div id="tx-history-box" style="font-size:0.78rem; display:flex; flex-direction:column; gap:6px;">
+                    <span style="color:var(--text-muted);">No transactions yet</span>
                 </div>
             </div>
 
@@ -673,14 +770,50 @@ def index_view():
             </div>
         </div>
 
-        <!-- Modal 2: Email Verification -->
+        <!-- Modal 2: Deposit Funds -->
+        <div class="modal-overlay" id="deposit-modal">
+            <div class="modal-card">
+                <div class="modal-title">
+                    <span>Deposit Capital</span>
+                    <button class="modal-close" onclick="closeModal('deposit-modal')">✕</button>
+                </div>
+                <div class="preset-chips">
+                    <button class="preset-chip" onclick="setDepositPreset(1000)">+1,000</button>
+                    <button class="preset-chip" onclick="setDepositPreset(5000)">+5,000</button>
+                    <button class="preset-chip" onclick="setDepositPreset(10000)">+10,000</button>
+                </div>
+                <div class="input-group">
+                    <label id="deposit-label">Deposit Amount (USD)</label>
+                    <input type="number" id="deposit-amount-input" value="5000" min="10">
+                </div>
+                <button class="btn-action" onclick="executeDeposit()">Confirm Deposit</button>
+            </div>
+        </div>
+
+        <!-- Modal 3: Withdraw Funds -->
+        <div class="modal-overlay" id="withdraw-modal">
+            <div class="modal-card">
+                <div class="modal-title">
+                    <span>Withdraw Funds</span>
+                    <button class="modal-close" onclick="closeModal('withdraw-modal')">✕</button>
+                </div>
+                <p style="font-size:0.8rem; color:var(--text-muted);">Withdrawals require a VERIFIED Identity status.</p>
+                <div class="input-group">
+                    <label id="withdraw-label">Withdrawal Amount (USD)</label>
+                    <input type="number" id="withdraw-amount-input" value="1000" min="10">
+                </div>
+                <button class="btn-action" style="background:#F23645;" onclick="executeWithdraw()">Submit Withdrawal Request</button>
+            </div>
+        </div>
+
+        <!-- Modal 4: Email Verification -->
         <div class="modal-overlay" id="email-modal">
             <div class="modal-card">
                 <div class="modal-title">
                     <span>Verify Email Address</span>
                     <button class="modal-close" onclick="closeModal('email-modal')">✕</button>
                 </div>
-                <p style="font-size:0.8rem; color:var(--text-muted);">Enter the 6-digit confirmation code sent to your email.</p>
+                <p style="font-size:0.8rem; color:var(--text-muted);">Enter the confirmation code sent to your email.</p>
                 <div class="input-group">
                     <label>Confirmation Code</label>
                     <input type="text" id="email-code" placeholder="e.g. 582910">
@@ -689,7 +822,7 @@ def index_view():
             </div>
         </div>
 
-        <!-- Modal 3: KYC ID Verification -->
+        <!-- Modal 5: KYC ID Verification -->
         <div class="modal-overlay" id="kyc-modal">
             <div class="modal-card">
                 <div class="modal-title">
@@ -705,7 +838,7 @@ def index_view():
             </div>
         </div>
 
-        <!-- Modal 4: Admin Market Fluctuation Controller -->
+        <!-- Modal 6: Admin Market Fluctuation Controller -->
         <div class="modal-overlay" id="admin-modal">
             <div class="modal-card" style="max-width:440px;">
                 <div class="modal-title">
@@ -770,8 +903,49 @@ def index_view():
                 activeCurrency = c;
                 document.getElementById('btn-usd').className = c === 'USD' ? 'curr-btn active' : 'curr-btn';
                 document.getElementById('btn-inr').className = c === 'INR' ? 'curr-btn active' : 'curr-btn';
+                document.getElementById('deposit-label').innerText = `Deposit Amount (${c})`;
+                document.getElementById('withdraw-label').innerText = `Withdrawal Amount (${c})`;
                 updateCalculations();
                 loadUserPortfolio();
+            }
+
+            function setDepositPreset(val) {
+                const amt = activeCurrency === "USD" ? val : (val * 84);
+                document.getElementById('deposit-amount-input').value = amt;
+            }
+
+            async function executeDeposit() {
+                const amt = parseFloat(document.getElementById('deposit-amount-input').value);
+                const res = await fetch('/api/wallet/deposit', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({amount: amt, currency: activeCurrency})
+                });
+                const d = await res.json();
+                if (res.ok) {
+                    alert(`Deposited ${activeCurrency === 'USD' ? '$' : '₹'}${amt.toLocaleString()} successfully!`);
+                    closeModal('deposit-modal');
+                    loadUserPortfolio();
+                } else {
+                    alert(d.detail || "Deposit failed");
+                }
+            }
+
+            async function executeWithdraw() {
+                const amt = parseFloat(document.getElementById('withdraw-amount-input').value);
+                const res = await fetch('/api/wallet/withdraw', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({amount: amt, currency: activeCurrency})
+                });
+                const d = await res.json();
+                if (res.ok) {
+                    alert(`Withdrawal of ${activeCurrency === 'USD' ? '$' : '₹'}${amt.toLocaleString()} processed!`);
+                    closeModal('withdraw-modal');
+                    loadUserPortfolio();
+                } else {
+                    alert(d.detail || "Withdrawal failed");
+                }
             }
 
             function toggleAuth() {
@@ -816,22 +990,20 @@ def index_view():
                     document.getElementById('user-display').style.display = 'flex';
                     document.getElementById('user-display-name').innerText = currentUser.username;
                     
-                    // Email verification status
                     const emBadge = document.getElementById('email-badge');
                     emBadge.innerText = currentUser.email_verified ? 'VERIFIED' : 'UNVERIFIED';
                     emBadge.style.color = currentUser.email_verified ? 'var(--neon)' : 'var(--gold)';
                     if (currentUser.email_verified) document.getElementById('email-verify-btn').style.display = 'none';
 
-                    // KYC status
                     const kycBadge = document.getElementById('kyc-badge');
                     kycBadge.innerText = currentUser.kyc_status;
                     kycBadge.style.color = currentUser.kyc_status === 'VERIFIED' ? 'var(--neon)' : 'var(--gold)';
                     if (currentUser.kyc_status === 'VERIFIED') document.getElementById('kyc-btn').style.display = 'none';
 
-                    // Admin card toggle
                     if (currentUser.is_admin) {
                         document.getElementById('admin-panel-card').style.display = 'block';
                     }
+                    loadUserPortfolio();
                 }
             }
             checkAuth();
@@ -1012,6 +1184,7 @@ def index_view():
                 if (d.authenticated) {
                     const bal = activeCurrency === 'USD' ? `$${d.user.balance_usd.toLocaleString('en-US', {minimumFractionDigits:2})}` : `₹${d.user.balance_inr.toLocaleString('en-IN', {minimumFractionDigits:2})}`;
                     document.getElementById('user-display-bal').innerText = bal;
+                    document.getElementById('drawer-balance').innerText = bal;
 
                     const pnlVal = activeCurrency === 'USD' ? d.total_unrealized_usd : d.total_unrealized_inr;
                     const pnlSign = pnlVal >= 0 ? '+' : '';
@@ -1019,6 +1192,7 @@ def index_view():
                     document.getElementById('pos-total-pnl').innerText = `P&L: ${pnlSign}${sym}${pnlVal.toFixed(2)}`;
                     document.getElementById('pos-total-pnl').style.color = pnlVal >= 0 ? "var(--green)" : "var(--red)";
 
+                    // Positions
                     const pBox = document.getElementById('positions-box');
                     if (!d.positions || d.positions.length === 0) {
                         pBox.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-muted); font-size:0.85rem;">No open contract positions</div>`;
@@ -1040,9 +1214,24 @@ def index_view():
                             `;
                         }).join("");
                     }
+
+                    // Transactions Log in Drawer
+                    const txBox = document.getElementById('tx-history-box');
+                    if (d.transactions && d.transactions.length > 0) {
+                        txBox.innerHTML = d.transactions.map(t => {
+                            const dispAmt = activeCurrency === "USD" ? `$${t.amount_usd.toFixed(2)}` : `₹${(t.amount_usd * 84).toFixed(2)}`;
+                            const isDep = t.type === 'DEPOSIT';
+                            return `
+                                <div style="display:flex; justify-content:space-between;">
+                                    <span style="color:${isDep ? 'var(--green)' : '#F23645'}; font-weight:700;">${t.type}</span>
+                                    <span>${dispAmt}</span>
+                                </div>
+                            `;
+                        }).join("");
+                    }
                 }
             }
-            setInterval(loadUserPortfolio, 2000);
+            setInterval(loadUserPortfolio, 2500);
             loadUserPortfolio();
         </script>
     </body>
