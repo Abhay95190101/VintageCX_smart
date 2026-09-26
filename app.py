@@ -276,7 +276,8 @@ def index_view():
             }
 
             // WebSocket Connection
-            const ws = new WebSocket(`ws://${location.host}/ws/market-feed`);
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/market-feed`);(`ws://${location.host}/ws/market-feed`);
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 
