@@ -110,6 +110,7 @@ def manifest():
     return JSONResponse(content={
         "name": "VintageCX Pro Terminal",
         "short_name": "VintageCX",
+        "id": "/",
         "description": "Next-Gen Paper Trading & Risk Management Terminal",
         "start_url": "/",
         "display": "standalone",
@@ -117,6 +118,18 @@ def manifest():
         "background_color": "#0B0E14",
         "theme_color": "#5A31F4",
         "icons": [
+            {
+                "src": "/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any"
+            },
+            {
+                "src": "/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "maskable"
+            },
             {
                 "src": "/icon-512.png",
                 "sizes": "512x512",
@@ -128,12 +141,6 @@ def manifest():
                 "sizes": "512x512",
                 "type": "image/png",
                 "purpose": "maskable"
-            },
-            {
-                "src": "/icon-192.png",
-                "sizes": "192x192",
-                "type": "image/png",
-                "purpose": "any"
             }
         ]
     })
