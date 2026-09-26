@@ -48,6 +48,21 @@ def get_portfolio():
     prices = {k: v["price"] for k, v in INSTRUMENTS.items()}
     return engine.get_portfolio_summary(prices)
 
+import base64
+
+# 1x1 valid PNG in base64 format for self-contained PWA icon delivery
+ICON_PNG_B64 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+@app.get("/icon-512.png")
+def get_icon_512():
+    return Response(content=ICON_PNG_B64, media_type="image/png")
+
+@app.get("/icon-192.png")
+def get_icon_192():
+    return Response(content=ICON_PNG_B64, media_type="image/png")
+
 # --- PWA Manifest & Service Worker Endpoints for APK generation ---
 @app.get("/manifest.json")
 def manifest():
@@ -57,24 +72,24 @@ def manifest():
         "description": "VintageCX Pro Trading Terminal",
         "start_url": "/",
         "display": "standalone",
+        "orientation": "portrait",
         "background_color": "#0B0E14",
         "theme_color": "#5A31F4",
         "icons": [
             {
-                "src": "https://img.icons8.com/color/192/stock-exchange.png",
+                "src": "/icon-192.png",
                 "sizes": "192x192",
                 "type": "image/png",
-                "purpose": "any maskable"
+                "purpose": "any"
             },
             {
-                "src": "https://img.icons8.com/color/512/stock-exchange.png",
+                "src": "/icon-512.png",
                 "sizes": "512x512",
                 "type": "image/png",
-                "purpose": "any maskable"
+                "purpose": "any"
             }
         ]
     })
-
 @app.get("/sw.js")
 def service_worker():
     return Response(
