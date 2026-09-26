@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>VintageCX Dynamic Ultra Icon</title>
+</head>
+<body style="background: #06080D; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; font-family: -apple-system, sans-serif;">
+    <h2 style="letter-spacing: 2px; text-transform: uppercase; font-size: 1.2rem; color: #848E9C; margin-bottom: 20px;">
+        VintageCX Next-Gen App Icon (512×512)
+    </h2>
+    <canvas id="iconCanvas" width="512" height="512" style="border-radius: 110px; box-shadow: 0 20px 50px rgba(0, 255, 163, 0.15), 0 10px 30px rgba(0,0,0,0.9); margin-bottom: 28px;"></canvas>
+    <br>
+    <button onclick="downloadIcon()" style="background: linear-gradient(135deg, #5A31F4, #00FFA3); color: #06080D; border: none; padding: 16px 36px; font-size: 16px; font-weight: 800; border-radius: 12px; cursor: pointer; letter-spacing: 1px; box-shadow: 0 4px 20px rgba(0, 255, 163, 0.3);">
+        ⬇ DOWNLOAD NEW VINTAGECX ICON
+    </button>
+
+    <script>
+        const canvas = document.getElementById("iconCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // 1. Base Canvas Gradient
+        const bgGrad = ctx.createRadialGradient(256, 256, 50, 256, 256, 320);
+        bgGrad.addColorStop(0, "#121826");
+        bgGrad.addColorStop(0.6, "#090C12");
+        bgGrad.addColorStop(1, "#030407");
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, 512, 512);
+
+        // 2. High-Tech Background Cyber Grid
+        ctx.strokeStyle = "rgba(90, 49, 244, 0.08)";
+        ctx.lineWidth = 1;
+        for (let i = 40; i < 512; i += 32) {
+            ctx.beginPath();
+            ctx.moveTo(i, 0); ctx.lineTo(i, 512);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, i); ctx.lineTo(512, i);
+            ctx.stroke();
+        }
+
+        // 3. Ambient Neon Lighting (Violet & Mint Flares)
+        const violetGlow = ctx.createRadialGradient(100, 100, 0, 100, 100, 220);
+        violetGlow.addColorStop(0, "rgba(90, 49, 244, 0.35)");
+        violetGlow.addColorStop(1, "transparent");
+        ctx.fillStyle = violetGlow;
+        ctx.fillRect(0, 0, 512, 512);
+
+        const cyanGlow = ctx.createRadialGradient(380, 400, 0, 380, 400, 220);
+        cyanGlow.addColorStop(0, "rgba(0, 255, 163, 0.25)");
+        cyanGlow.addColorStop(1, "transparent");
+        ctx.fillStyle = cyanGlow;
+        ctx.fillRect(0, 0, 512, 512);
+
+        // 4. Dynamic 3D Hex-Prism (Back Layer)
+        ctx.save();
+        ctx.beginPath();
+        const hexPoints = [
+            [256, 48],
+            [440, 154],
+            [440, 366],
+            [256, 472],
+            [72, 366],
+            [72, 154]
+        ];
+        ctx.moveTo(hexPoints[0][0], hexPoints[0][1]);
+        for(let pt of hexPoints) ctx.lineTo(pt[0], pt[1]);
+        ctx.closePath();
+        
+        ctx.fillStyle = "rgba(18, 24, 38, 0.75)";
+        ctx.fill();
+        ctx.lineWidth = 4;
+        const borderGrad = ctx.createLinearGradient(72, 48, 440, 472);
+        borderGrad.addColorStop(0, "#8B5CF6");
+        borderGrad.addColorStop(0.5, "#1E293B");
+        borderGrad.addColorStop(1, "#00FFA3");
+        ctx.strokeStyle = borderGrad;
+        ctx.stroke();
+        ctx.restore();
+
+        // 5. Candlestick Holograms (Stylized, Sleek)
+        function drawCandle(x, y, w, h, wickH, color) {
+            ctx.save();
+            ctx.fillStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 12;
+            ctx.fillRect(x + w/2 - 1.5, y - wickH/2, 3, h + wickH);
+            ctx.fillRect(x, y, w, h);
+            ctx.restore();
+        }
+        drawCandle(120, 230, 10, 50, 40, "rgba(8, 153, 129, 0.45)");
+        drawCandle(145, 190, 10, 70, 30, "rgba(8, 153, 129, 0.3)");
+        drawCandle(360, 160, 10, 60, 40, "rgba(242, 54, 69, 0.35)");
+        drawCandle(385, 210, 10, 80, 50, "rgba(242, 54, 69, 0.45)");
+
+        // 6. The Dynamic "V-Apex" Beam (Sharp, Multi-Segment Vector)
+        ctx.save();
+        ctx.shadowColor = "#00FFA3";
+        ctx.shadowBlur = 35;
+
+        // Outer Glow V-Wing
+        ctx.beginPath();
+        ctx.moveTo(110, 140);
+        ctx.lineTo(256, 385);
+        ctx.lineTo(402, 140);
+        ctx.lineWidth = 28;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "miter";
+        ctx.miterLimit = 4;
+
+        const vGrad = ctx.createLinearGradient(110, 140, 402, 385);
+        vGrad.addColorStop(0, "#089981");
+        vGrad.addColorStop(0.5, "#00FFA3");
+        vGrad.addColorStop(1, "#38BDF8");
+        ctx.strokeStyle = vGrad;
+        ctx.stroke();
+
+        // Inner Hyper-Core White Beam
+        ctx.beginPath();
+        ctx.moveTo(110, 140);
+        ctx.lineTo(256, 385);
+        ctx.lineTo(402, 140);
+        ctx.lineWidth = 8;
+        ctx.strokeStyle = "#FFFFFF";
+        ctx.stroke();
+        ctx.restore();
+
+        // 7. Dynamic Cross-Ray ("X" Node Element)
+        ctx.save();
+        ctx.shadowColor = "#F59E0B";
+        ctx.shadowBlur = 25;
+        ctx.beginPath();
+        ctx.moveTo(160, 280);
+        ctx.lineTo(352, 230);
+        ctx.lineWidth = 10;
+        ctx.lineCap = "round";
+        const xGrad = ctx.createLinearGradient(160, 280, 352, 230);
+        xGrad.addColorStop(0, "#F59E0B");
+        xGrad.addColorStop(1, "#EC4899");
+        ctx.strokeStyle = xGrad;
+        ctx.stroke();
+
+        // Inner beam for cross
+        ctx.beginPath();
+        ctx.moveTo(160, 280);
+        ctx.lineTo(352, 230);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#FFFBEB";
+        ctx.stroke();
+        ctx.restore();
+
+        // 8. Fusion Power Apex (The Glowing Diamond at the V Base)
+        ctx.save();
+        ctx.shadowColor = "#00FFA3";
+        ctx.shadowBlur = 30;
+        ctx.translate(256, 385);
+        ctx.rotate(45 * Math.PI / 180);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(-12, -12, 24, 24);
+        ctx.strokeStyle = "#00FFA3";
+        ctx.lineWidth = 4;
+        ctx.strokeRect(-12, -12, 24, 24);
+        ctx.restore();
+
+        function downloadIcon() {
+            const link = document.createElement("a");
+            link.download = "VintageCX-Dynamic-Icon.png";
+            link.href = canvas.toDataURL("image/png");
+            link.click();
+        }
+    </script>
+</body>
+</html>
