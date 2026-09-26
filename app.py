@@ -76,19 +76,13 @@ def manifest():
         "background_color": "#0B0E14",
         "theme_color": "#5A31F4",
         "icons": [
-            {
-                "src": "/icon-192.png",
-                "sizes": "192x192",
-                "type": "image/png",
-                "purpose": "any"
-            },
-            {
-                "src": "/icon-512.png",
-                "sizes": "512x512",
-                "type": "image/png",
-                "purpose": "any"
-            }
-        ]
+    {
+        "src": "https://raw.githubusercontent.com/Abhay95190101/VintageCX_smart/main/VintageCX-Dynamic-Icon.png",
+        "sizes": "512x512",
+        "type": "image/png",
+        "purpose": "any maskable"
+    }
+]
     })
 @app.get("/sw.js")
 def service_worker():
